@@ -1,0 +1,153 @@
+# Application
+app-name = WMDE Viewer
+app-description = Переглядач зображень для стільниці WMDE
+
+## About
+menu-about = Про WMDE Viewer...
+repository = Сховище
+support = Підтримка
+
+# Menu - File
+menu-file = Файл
+menu-open-file = Відкрити файл
+menu-open-recent = Нещодавні
+menu-open-folder = Відкрити теку
+menu-open-containing = Відкрити розташування файлу
+menu-save = Зберегти
+menu-save-as = Зберегти як
+menu-set-wallpaper = Зробити тлом
+menu-move-to-trash = Пересунути до смітника
+menu-delete-permanently = Остаточно видалити
+menu-image-details = Відомості про зображення
+menu-quit = Завершити
+
+# Wallpaper dialog
+wallpaper-dialog-title = Зробити тлом
+wallpaper-all-displays = Всі дисплеї
+wallpaper-cancel = Скасувати
+
+# Toast
+toast-undo = Скасувати
+
+# Menu - Edit
+menu-edit = Редагувати
+menu-undo = Скасувати дію
+menu-redo = Повторити дію
+menu-revert-all = Скасувати всі зміни
+menu-cut = Вирізати
+menu-copy = Копіювати
+menu-paste = Вставити
+menu-copy-to-clipboard = Копіювати зображення до буфера обміну
+menu-copy-file-path = Копіювати шлях до файлу
+menu-rotate-left = Обернути ліворуч на 90°
+menu-rotate-right = Обернути праворуч на 90°
+
+# Menu - View
+menu-view = Вид
+menu-zoom-in = Збільшити
+menu-zoom-out = Зменшити
+menu-fit-to-view = Вписати у вікно
+menu-actual-size = Справжній розмір
+menu-fullscreen = Повний екран
+
+# Toolbar
+toolbar-crop = Обрізати
+toolbar-annotate = Позначки
+toolbar-select = Вибрати
+toolbar-apply = Застосувати
+toolbar-cancel = Скасувати
+toolbar-rotate-left = Обернути ліворуч
+toolbar-rotate-right = Обернути праворуч
+toolbar-zoom-in = Збільшити
+toolbar-zoom-out = Зменшити
+toolbar-fullscreen = Повний екран
+toolbar-save = Зберегти
+toolbar-save-as = Зберегти як
+
+# Unsaved edits dialog
+unsaved-dialog-title = Незбережені зміни
+unsaved-dialog-body = У зображенні є незбережені зміни. Зберегти їх, перш ніж продовжити?
+unsaved-save = Зберегти
+unsaved-save-as = Зберегти як
+unsaved-discard = Не зберігати
+unsaved-cancel = Скасувати
+
+# Shapes Tool
+shapes-rectangle = Прямокутник
+shapes-block = Прямокутник із заливкою
+shapes-line = Лінія
+shapes-arrow = Стрілка
+shapes-ellipse = Еліпс
+shapes-polygon = Багатокутник
+shapes-star = Зірка
+
+# Text tool
+text-tool = Напис
+
+# Drawing Tool
+drawing-highlighter = Маркер
+drawing-pen = Ручка
+drawing-pencil = Олівець
+
+# Crop Tool
+crop-custom = Довільне
+crop-original = Оригінал
+crop-1-1 = 1:1
+crop-16-9 = 16:9
+crop-7-5 = 7:5
+crop-5-7 = 5:7
+crop-4-3 = 4:3
+crop-3-4 = 3:4
+crop-3-2 = 3:2
+crop-2-3 = 2:3
+
+# Image Details Labels
+image-type = Тип:
+image-file-size = Розмір файлу:
+image-created = Створено:
+image-modified = Змінено:
+image-accessed = Дата доступу:
+image-size = Розміри зображення:
+image-dpi = Роздільна здатність:
+image-folder = Тека:
+
+# Settings
+settings = Налаштування
+appearance = Вигляд
+theme = Тема
+match-desktop = Системна
+dark = Темна
+light = Світла
+startup = Запуск
+show-navbar = Показувати панель мініатюр під час запуску
+
+type-here = Введіть текст...
+
+# WMDE additions: interface strings upstream keeps outside fl!()
+no-open-file = Файл не відкрито
+no-image-loaded = Зображення не відкрито
+image-dpi-value = { $dpi } пікс./дюйм
+color-reset = Скинути до типового
+color-recent = Нещодавні кольори
+color-copied = Скопійовано!
+no-image-selected = Зображення не вибрано
+dialog-open-image = Відкрити зображення
+dialog-open-folder = Відкрити теку
+dialog-save-image-as = Зберегти зображення як...
+filter-all = Всі зображення
+unnamed-file = файл
+moved-to-trash = «{ $file }» пересунуто до смітника
+image-type-format = Зображення { $format }
+image-type-generic = Зображення
+size-b = Б
+size-kb = КБ
+size-mb = МБ
+size-gb = ГБ
+size-bytes = ({ $bytes } { $count ->
+    [one] байт
+    [few] байти
+    [many] байтів
+   *[other] байта
+})
+# chrono strftime pattern for the created / modified / accessed dates
+date-time-format = %d.%m.%Y %H:%M:%S

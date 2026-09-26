@@ -2,6 +2,7 @@
 Name=WMDE Viewer
 GenericName=WMDE Viewer
 Comment=View and annotate images
+Comment[uk]=Перегляд і позначення зображень
 Exec=wmde-viewer %F
 Icon=fun.wmde.Viewer
 Terminal=false
@@ -10,6 +11,7 @@ Categories=Graphics;Image;Media;
 StartupNotify=true
 MimeType=image/jpeg;image/png;image/gif;image/webp;image/bmp;image/tiff;image/x-icon;image/avif;image/heif;image/heic;image/jxl;image/svg+xml;image/x-portable-pixmap;image/x-portable-graymap;image/x-portable-bitmap;image/x-portable-anymap;image/x-qoi;image/vnd.radiance;
 Keywords=image;photo;picture;viewer;annotate;markup;
+Keywords[uk]=зображення;фото;світлина;картинка;переглядач;позначки;
 
 [Desktop Action Gallery]
 Name=WMDE Viewer
