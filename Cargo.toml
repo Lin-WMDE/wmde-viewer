@@ -40,10 +40,9 @@ image = { version = "0.25.9", features = [
   "avif",
 ] }
 kamadak-exif = "0.6.1"
-libheif-rs = { version = "2.7.0", default-features = false, features = [
-  "embedded-libheif",
-  "v1_17",
-] }
+# WMDE: link the system libheif instead of `embedded-libheif`, which builds the
+# library from source through cmake; the package depends on libheif.
+libheif-rs = { version = "2.7.0", default-features = false, features = ["v1_17"] }
 lru = "0.16.3"
 rayon = "1.11.0"
 resvg = "0.47.0"
@@ -51,7 +50,9 @@ serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "sync", "fs"] }
 tracing = "0.1.44"
-turbojpeg = "1.4.0"
+# WMDE: link the system libjpeg-turbo through pkg-config instead of building it with
+# cmake (the crate's default feature); the package depends on libjpeg-turbo.
+turbojpeg = { version = "1.4.0", default-features = false, features = ["pkg-config"] }
 zune-image = "0.5.0"
 
 
@@ -65,4 +66,41 @@ features = [
   "surface-message",
   "rfd",
 ]
-git = "https://github.com/pop-os/libcosmic.git"
+# WMDE libcosmic fork, resolved by path to the sibling checkout. The default features stay
+# on: dbus-config carries the theme through the WMDE settings daemon.
+path = "../libcosmic"
+
+# Build libcosmic and iced from the local WMDE fork, so the rebranded config root and the
+# fun.wmde.* theme ids resolve. ONE table per canonical git source: cargo folds the
+# `.../libcosmic`, `.../libcosmic/` and `.../libcosmic.git` spellings into a single source,
+# and a second table for it does not add to this one - part of the graph would silently
+# resolve to upstream with no warning and no error.
+[patch."https://github.com/pop-os/libcosmic"]
+libcosmic = { path = "../libcosmic" }
+cosmic-config = { path = "../libcosmic/cosmic-config" }
+cosmic-config-derive = { path = "../libcosmic/cosmic-config-derive" }
+cosmic-theme = { path = "../libcosmic/cosmic-theme" }
+iced = { path = "../libcosmic/iced" }
+iced_accessibility = { path = "../libcosmic/iced/accessibility" }
+iced_core = { path = "../libcosmic/iced/core" }
+iced_debug = { path = "../libcosmic/iced/debug" }
+iced_futures = { path = "../libcosmic/iced/futures" }
+iced_graphics = { path = "../libcosmic/iced/graphics" }
+iced_program = { path = "../libcosmic/iced/program" }
+iced_renderer = { path = "../libcosmic/iced/renderer" }
+iced_runtime = { path = "../libcosmic/iced/runtime" }
+iced_tiny_skia = { path = "../libcosmic/iced/tiny_skia" }
+iced_wgpu = { path = "../libcosmic/iced/wgpu" }
+iced_widget = { path = "../libcosmic/iced/widget" }
+iced_winit = { path = "../libcosmic/iced/winit" }
+
+# WMDE: shared release profile, see .doc/perf.
+#  - panic = "abort" drops .eh_frame and .gcc_except_table; catch_unwind stops catching,
+#    which in this stack only guards SVG parsing in iced's vector backends.
+#  - lto = "fat" with one codegen unit removes what monomorphisation duplicated.
+# The LTO half is expensive and single threaded; FAST=1 turns it off for development
+# builds without touching panic or opt-level, so behaviour still matches what ships.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
