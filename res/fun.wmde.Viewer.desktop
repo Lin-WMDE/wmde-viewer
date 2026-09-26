@@ -1,9 +1,9 @@
 [Desktop Entry]
-Name=COSMIC Viewer
-GenericName=COSMIC Viewer
+Name=WMDE Viewer
+GenericName=WMDE Viewer
 Comment=View and annotate images
-Exec=cosmic-viewer %F
-Icon=com.system76.CosmicViewer
+Exec=wmde-viewer %F
+Icon=fun.wmde.Viewer
 Terminal=false
 Type=Application
 Categories=Graphics;Image;Media;
@@ -12,5 +12,5 @@ MimeType=image/jpeg;image/png;image/gif;image/webp;image/bmp;image/tiff;image/x-
 Keywords=image;photo;picture;viewer;annotate;markup;
 
 [Desktop Action Gallery]
-Name=COSMIC Viewer
-Exec=cosmic-viewer
+Name=WMDE Viewer
+Exec=wmde-viewer

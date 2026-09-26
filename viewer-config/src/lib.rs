@@ -7,7 +7,7 @@ use cosmic::{
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-const APP_ID: &str = "com.system76.CosmicViewer";
+const APP_ID: &str = "fun.wmde.Viewer";
 pub const COSMIC_THEME_DARK: &str = "COSMIC Dark";
 pub const COSMIC_THEME_LIGHT: &str = "COSMIC Light";
 

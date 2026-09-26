@@ -1,5 +1,5 @@
-name := 'cosmic-viewer'
-export APPID := 'com.system76.CosmicViewer'
+name := 'wmde-viewer'
+export APPID := 'fun.wmde.Viewer'
 
 rootdir := ''
 prefix := '/usr'
@@ -60,7 +60,7 @@ dev *args:
 
 # Run with debug logs
 run *args:
-    env RUST_LOG=cosmic_viewer=debug RUST_BACKTRACE=full cargo run --release {{args}}
+    env RUST_LOG=wmde_viewer=debug RUST_BACKTRACE=full cargo run --release {{args}}
 
 # Installs files
 install:

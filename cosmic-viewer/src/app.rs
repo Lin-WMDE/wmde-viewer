@@ -1384,7 +1384,7 @@ impl CosmicViewer {
 }
 
 impl Application for CosmicViewer {
-    const APP_ID: &'static str = "com.system76.CosmicViewer";
+    const APP_ID: &'static str = "fun.wmde.Viewer";
 
     type Executor = cosmic::executor::Default;
     type Flags = Option<PathBuf>;
@@ -1509,15 +1509,15 @@ impl Application for CosmicViewer {
                 .name(fl!("app-name"))
                 .icon(icon::from_name(Self::APP_ID))
                 .version(env!("CARGO_PKG_VERSION"))
-                .author("Bryan Hyland and System76")
+                .author("WMDE")
                 .comments(fl!("app-description"))
                 .license("GPL-3.0-only")
                 .developers([("System76", "info@system76.com")])
                 .links([
-                    (fl!("repository"), "https://github.com/pop-os/cosmic-viewer"),
+                    (fl!("repository"), "https://github.com/Lin-WMDE/wmde-viewer"),
                     (
                         fl!("support"),
-                        "https://github.com/pop-os/cosmic-viewer/issues",
+                        "https://github.com/Lin-WMDE/wmde-viewer/issues",
                     ),
                 ]),
         };

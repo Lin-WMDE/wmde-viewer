@@ -1,9 +1,9 @@
 # Application
-app-name = COSMIC Viewer
-app-description = Image viewer for the COSMIC desktop
+app-name = WMDE Viewer
+app-description = Image viewer for the WMDE desktop
 
 ## About
-menu-about = About COSMIC Viewer...
+menu-about = About WMDE Viewer...
 repository = Repository
 support = Support
 

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<component type="desktop-application">
+    <id>fun.wmde.Viewer</id>
+    <metadata_license>CC0-1.0</metadata_license>
+    <project_license>GPL-3.0-only</project_license>
+    <project_group>WMDE</project_group>
+    <developer_name>WMDE</developer_name>
+    <!-- Forked from pop-os/cosmic-viewer; originally created by Bryan Hyland and System76 -->
+    <update_contact>bryan.hyland32@gmail.com</update_contact>
+    <url type="homepage">https://wmde.fun</url>
+    <url type="bugtracker">https://github.com/Lin-WMDE/wmde-viewer/issues</url>
+    <name>WMDE Viewer</name>
+    <summary>Image viewer for the WMDE desktop</summary>
+    <description>
+        <p>
+            WMDE Viewer is an image viewer and markup tool for the WMDE desktop environment.
+            It opens a wide range of formats and provides quick navigation, non-destructive editing, and markup tools.
+        </p>
+        <p
+        >WMDE Viewer opens a wide range of formats and provides quick navigation, non-destructive editing, and markup tools</p>
+        <ul>
+            <li
+            >Opens JPEG, PNG, GIF, WebP, BMP, TIFF, ICO, AVIF, HEIF/HEIC, JPEG XL, SVG and the netpbm and Farbfeld families</li>
+            <li>Zoom, pan, and fit-to-window viewer</li>
+            <li>Thumbnail navigation through a folder</li>
+            <li>Crop and rotate</li>
+            <li>Markup with pen, highlighter, shapes, and text</li>
+            <li>Set an image as the desktop wallpaper</li>
+            <li
+            >Copy an image to system clipboard and paste it in another application</li>
+        </ul>
+    </description>
+    <keywords>
+        <keyword>Image</keyword>
+        <keyword>Photo</keyword>
+        <keyword>Picture</keyword>
+        <keyword>Viewer</keyword>
+        <keyword>Annotate</keyword>
+        <keyword>Markup</keyword>
+    </keywords>
+    <launchable type="desktop-id">fun.wmde.Viewer.desktop</launchable>
+    <releases>
+        <release version="1.0.0" date="2026-07-06">
+            <description>
+                <p>Initial release.</p>
+            </description>
+        </release>
+                <release version="1.9.0" date="2026-09-23">
+            <description>
+                <p>Initial release.</p>
+            </description>
+        </release>
+    </releases>
+    <content_rating type="oars-1.1" />
+    <provides>
+        <id>fun.wmde.Application</id>
+        <mediatype>image/jpeg</mediatype>
+        <mediatype>image/png</mediatype>
+        <mediatype>image/gif</mediatype>
+        <mediatype>image/webp</mediatype>
+        <mediatype>image/bmp</mediatype>
+        <mediatype>image/tiff</mediatype>
+        <mediatype>image/x-icon</mediatype>
+        <mediatype>image/avif</mediatype>
+        <mediatype>image/heif</mediatype>
+        <mediatype>image/heic</mediatype>
+        <mediatype>image/jxl</mediatype>
+        <mediatype>image/svg+xml</mediatype>
+        <mediatype>image/x-portable-pixmap</mediatype>
+        <mediatype>image/x-portable-graymap</mediatype>
+        <mediatype>image/x-portable-bitmap</mediatype>
+        <mediatype>image/x-portable-anymap</mediatype>
+        <mediatype>image/x-qoi</mediatype>
+        <mediatype>image/vnd.radiance</mediatype>
+        <binary>wmde-viewer</binary>
+    </provides>
+</component>
