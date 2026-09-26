@@ -223,7 +223,7 @@ impl CosmicViewer {
                     .file_name()
                     .map(|f| f.to_string_lossy().to_string())
                     .unwrap_or_default(),
-                None => "No Open File".to_string(),
+                None => fl!("no-open-file"),
             };
 
             let window_title = format!("{title} - {}", fl!("app-name"));
@@ -389,7 +389,7 @@ impl CosmicViewer {
         let mut content = Column::new().spacing(spacing.space_m);
 
         let Some(path) = self.nav.current() else {
-            return content.push(text::body("No image loaded")).into();
+            return content.push(text::body(fl!("no-image-loaded"))).into();
         };
 
         // File name
@@ -441,7 +441,10 @@ impl CosmicViewer {
 
         // DPI (JPEG/TIFF only)
         if let Some(dpi) = read_dpi(path) {
-            content = content.push(detail_row(fl!("image-dpi"), format!("{dpi} pixels/inch")));
+            content = content.push(detail_row(
+                fl!("image-dpi"),
+                fl!("image-dpi-value", dpi = dpi),
+            ));
         }
 
         // Folder name
@@ -685,7 +688,11 @@ impl CosmicViewer {
             let mut list = Column::new().spacing(4);
 
             for ratio in presets {
-                let label = ratio.label(is_portrait).to_string();
+                let label = match ratio {
+                    CropRatio::Custom => fl!("crop-custom"),
+                    CropRatio::Original => fl!("crop-original"),
+                    CropRatio::Fixed(..) => ratio.label(is_portrait).to_string(),
+                };
                 let is_selected = *ratio == self.crop_ratio;
                 let item = Row::new()
                     .push(container(text::body(label)).width(Length::Fixed(72.0)))
@@ -996,8 +1003,8 @@ impl CosmicViewer {
             let picker = self
                 .color_picker
                 .builder(|u| ViewerMessage::Edit(EditMessage::ColorPicker(u)))
-                .reset_label("Reset to default")
-                .build("Recent colors", "Copy", "Copied!");
+                .reset_label(fl!("color-reset"))
+                .build(fl!("color-recent"), fl!("menu-copy"), fl!("color-copied"));
 
             let popup = container(picker)
                 .padding([theme::active().cosmic().spacing.space_s, 0, 0, 0])
@@ -1694,7 +1701,7 @@ impl Application for CosmicViewer {
         } else {
             Column::new()
                 .push(Space::new().height(Length::Fill))
-                .push(text("No image selected").center())
+                .push(text(fl!("no-image-selected")).center())
                 .push(Space::new().height(Length::Fill))
                 .align_x(Horizontal::Center)
                 .width(Length::Fill)
@@ -1924,9 +1931,9 @@ impl Application for CosmicViewer {
                 }
                 return future(async move {
                     let dialog = file_chooser::open::Dialog::new()
-                        .title("Open Image")
+                        .title(fl!("dialog-open-image"))
                         .filter(
-                            FileFilter::new("All")
+                            FileFilter::new(fl!("filter-all"))
                                 .extension("jpg")
                                 .extension("JPG")
                                 .extension("jpeg")
@@ -1998,7 +2005,7 @@ impl Application for CosmicViewer {
                     return Task::none();
                 }
                 return future(async move {
-                    let dialog = file_chooser::open::Dialog::new().title("Open Folder");
+                    let dialog = file_chooser::open::Dialog::new().title(fl!("dialog-open-folder"));
 
                     match dialog.open_folder().await {
                         Ok(response) => response.url().to_file_path().map_or_else(
@@ -2050,7 +2057,7 @@ impl Application for CosmicViewer {
 
                 return future(async move {
                     let mut dialog = file_chooser::save::Dialog::new()
-                        .title("Save Image As...".to_string())
+                        .title(fl!("dialog-save-image-as"))
                         .file_name(suggested);
                     if let Some(directory) = directory {
                         dialog = dialog.directory(directory);
@@ -2244,8 +2251,7 @@ impl Application for CosmicViewer {
                     let file_name = path
                         .file_name()
                         .and_then(|name| name.to_str())
-                        .unwrap_or("file")
-                        .to_string();
+                        .map_or_else(|| fl!("unnamed-file"), str::to_string);
                     let paths: Arc<[PathBuf]> = Arc::from(vec![path.clone()]);
 
                     tasks.push(future(async move {
@@ -2254,7 +2260,7 @@ impl Application for CosmicViewer {
                         Action::App(ViewerMessage::TrashResult(result))
                     }));
 
-                    let label = format!("Moved {file_name} to trash");
+                    let label = fl!("moved-to-trash", file = file_name.as_str());
                     // Auto-dismiss (the Task `push` returns) needs libcosmic's "tokio" feature.
                     let toast = toaster::Toast::new(label)
                         .action(fl!("toast-undo"), move |id| {
@@ -4125,28 +4131,28 @@ fn detail_row<'a>(label: String, value: String) -> Element<'a, ViewerMessage> {
 }
 
 fn friendly_type_name(ext: &str) -> String {
-    match ext.to_lowercase().as_str() {
-        "jpg" | "jpeg" => "JPEG image",
-        "png" => "PNG image",
-        "gif" => "GIF image",
-        "webp" => "WebP image",
-        "bmp" => "BMP image",
-        "tiff" | "tif" => "TIFF image",
-        "ico" => "ICO image",
-        "avif" => "AVIF image",
-        "hdr" => "HDR image",
-        "jxl" => "JPEG XL image",
-        "ppm" => "PPM image",
-        "pgm" => "PGM image",
-        "pbm" => "PBM image",
-        "pnm" => "PNM image",
-        "qoi" => "QOI image",
-        "ff" | "farbfeld" => "Farbfeld image",
-        "svg" => "SVG image",
-        "heif" | "heic" => "HEIF image",
-        _ => "Image",
-    }
-    .to_string()
+    let format = match ext.to_lowercase().as_str() {
+        "jpg" | "jpeg" => "JPEG",
+        "png" => "PNG",
+        "gif" => "GIF",
+        "webp" => "WebP",
+        "bmp" => "BMP",
+        "tiff" | "tif" => "TIFF",
+        "ico" => "ICO",
+        "avif" => "AVIF",
+        "hdr" => "HDR",
+        "jxl" => "JPEG XL",
+        "ppm" => "PPM",
+        "pgm" => "PGM",
+        "pbm" => "PBM",
+        "pnm" => "PNM",
+        "qoi" => "QOI",
+        "ff" | "farbfeld" => "Farbfeld",
+        "svg" => "SVG",
+        "heif" | "heic" => "HEIF",
+        _ => return fl!("image-type-generic"),
+    };
+    fl!("image-type-format", format = format)
 }
 
 // reason: file sizes never approach 2^52 bytes, so f64 represents them exactly.
@@ -4179,16 +4185,18 @@ fn format_file_size(bytes: u64) -> String {
     const GB: f64 = 1024.0 * MB;
 
     let human_readable = if bytes as f64 >= GB {
-        format!("{:.1} GB", bytes as f64 / GB)
+        format!("{:.1} {}", bytes as f64 / GB, fl!("size-gb"))
     } else if bytes as f64 >= MB {
-        format!("{:.1} MB", bytes as f64 / MB)
+        format!("{:.1} {}", bytes as f64 / MB, fl!("size-mb"))
     } else if bytes as f64 >= KB {
-        format!("{:.1} KB", bytes as f64 / KB)
+        format!("{:.1} {}", bytes as f64 / KB, fl!("size-kb"))
     } else {
-        format!("{bytes} B")
+        format!("{bytes} {}", fl!("size-b"))
     };
 
-    format!("{human_readable} ({} bytes)", format_number(bytes))
+    let grouped = format_number(bytes);
+    let exact = fl!("size-bytes", bytes = grouped.as_str(), count = bytes);
+    format!("{human_readable} {exact}")
 }
 
 fn format_number(num: u64) -> String {
@@ -4206,7 +4214,14 @@ fn format_number(num: u64) -> String {
 
 fn format_system_time(time: std::time::SystemTime) -> String {
     let date_time: chrono::DateTime<chrono::Local> = time.into();
-    date_time.format("%a %d %b %Y %I:%M:%S %p %Z").to_string()
+    // The pattern comes from the locale: `to_string()` panics on a malformed one (and the
+    // release profile aborts), while `write!` reports it as an error.
+    let pattern = fl!("date-time-format");
+    let mut formatted = String::new();
+    if write!(formatted, "{}", date_time.format(&pattern)).is_err() {
+        formatted = date_time.format("%a %d %b %Y %I:%M:%S %p %Z").to_string();
+    }
+    formatted
 }
 
 // reason: the write guard must live across the whole `.faces()` walk (its single

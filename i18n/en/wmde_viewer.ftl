@@ -122,3 +122,30 @@ startup = Startup
 show-navbar = Show navigation bar on launch
 
 type-here = Type here...
+
+# WMDE additions: interface strings upstream keeps outside fl!()
+no-open-file = No Open File
+no-image-loaded = No image loaded
+image-dpi-value = { $dpi } pixels/inch
+color-reset = Reset to default
+color-recent = Recent colors
+color-copied = Copied!
+no-image-selected = No image selected
+dialog-open-image = Open Image
+dialog-open-folder = Open Folder
+dialog-save-image-as = Save Image As...
+filter-all = All
+unnamed-file = file
+moved-to-trash = Moved { $file } to trash
+image-type-format = { $format } image
+image-type-generic = Image
+size-b = B
+size-kb = KB
+size-mb = MB
+size-gb = GB
+size-bytes = ({ $bytes } { $count ->
+    [one] byte
+   *[other] bytes
+})
+# chrono strftime pattern for the created / modified / accessed dates
+date-time-format = %a %d %b %Y %I:%M:%S %p %Z
