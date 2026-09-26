@@ -146,7 +146,7 @@ pub fn menu_bar<'a>(
     let view_menu = build_view_menu(has_image);
 
     responsive_menu_bar()
-        .item_height(ItemHeight::Dynamic(40))
+        .item_height(ItemHeight::Dynamic(20))
         .item_width(ItemWidth::Uniform(320))
         .spacing(4.)
         .into_element(
