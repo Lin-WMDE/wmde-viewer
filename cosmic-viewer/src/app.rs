@@ -2189,7 +2189,7 @@ impl Application for CosmicViewer {
                                 }
                             }
                         } else {
-                            // Non-COSMIC Linux: set on all outputs
+                            // Non-WMDE Linux: set on all outputs
                             return future(async move {
                                 let result = set_wallpaper_cosmic_on(&path, None);
                                 Action::App(ViewerMessage::WallpaperResult(result))
@@ -4236,11 +4236,11 @@ fn load_font_families() -> Vec<&'static str> {
 // Wallpaper functions
 
 fn is_cosmic_desktop() -> bool {
-    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.to_uppercase().contains("COSMIC"))
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.to_uppercase().contains("WMDE"))
 }
 
 fn get_cosmic_outputs() -> Vec<String> {
-    if let Ok(output) = std::process::Command::new("cosmic-randr")
+    if let Ok(output) = std::process::Command::new("wmde-randr")
         .arg("list")
         .output()
         && output.status.success()
@@ -4298,7 +4298,7 @@ fn set_wallpaper_portable(path: &std::path::Path) -> Result<(), String> {
 fn set_wallpaper_cosmic_on(path: &std::path::Path, output: Option<&str>) -> Result<(), String> {
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?
-        .join("cosmic/com.system76.CosmicBackground/v1");
+        .join("wmde/fun.wmde.Background/v1");
 
     std::fs::create_dir_all(&config_dir)
         .map_err(|e| format!("Failed to create config directory: {e}"))?;
@@ -4353,7 +4353,7 @@ fn set_wallpaper_cosmic_on(path: &std::path::Path, output: Option<&str>) -> Resu
 fn add_to_cosmic_settings_custom_images(path: &std::path::Path) -> Result<(), String> {
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?
-        .join("cosmic/com.system76.CosmicSettings.Wallpaper/v1");
+        .join("wmde/fun.wmde.Settings.Wallpaper/v1");
 
     std::fs::create_dir_all(&config_dir)
         .map_err(|e| format!("Failed to create config directory: {e}"))?;
