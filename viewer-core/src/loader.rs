@@ -2,7 +2,7 @@
 
 use cosmic::widget::image::Handle;
 use fast_image_resize::{PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image as FirImage};
-use image::{DynamicImage, RgbaImage};
+use image::{DynamicImage, RgbaImage, metadata::Orientation};
 use libheif_rs::{ColorSpace as HeifColorSpace, HeifContext, LibHeif, RgbChroma};
 use resvg::{tiny_skia, usvg};
 use std::{
@@ -64,6 +64,55 @@ fn display_handle(image: &DynamicImage) -> Handle {
     Handle::from_rgba(width, height, rgba.into_raw())
 }
 
+// WMDE: EXIF orientation is applied to the pixels here, at decode. The texture is built with
+// `Handle::from_rgba`, and iced applies EXIF only to `Handle::Path` and `Handle::Bytes`, so a
+// photo taken with the phone turned stayed on its side - in the view, in the thumbnail strip,
+// and in what Save wrote back, since saving re-encodes these pixels and drops the tag. HEIF is
+// left out: libheif applies the file's own transforms while decoding.
+
+/// The EXIF orientation of the file at `path`, if it carries one.
+fn exif_orientation(path: &Path) -> Option<Orientation> {
+    let mut file = BufReader::new(File::open(path).ok()?);
+    let exif = exif::Reader::new().read_from_container(&mut file).ok()?;
+    let value = exif
+        .get_field(exif::Tag::Orientation, exif::In::PRIMARY)?
+        .value
+        .get_uint(0)?;
+    Orientation::from_exif(u8::try_from(value).ok()?)
+}
+
+/// A full-resolution decode of `path`, turned the way the file asks to be viewed.
+fn loaded_image(path: &Path, mut image: DynamicImage) -> LoadedImage {
+    if let Some(orientation) = exif_orientation(path) {
+        image.apply_orientation(orientation);
+    }
+    let (width, height) = (image.width(), image.height());
+    LoadedImage {
+        handle: display_handle(&image),
+        image,
+        width,
+        height,
+        path: path.to_path_buf(),
+    }
+}
+
+/// A thumbnail of `path` from RGBA `pixels`, turned the way the file asks to be viewed.
+fn loaded_thumbnail(path: &Path, width: u32, height: u32, pixels: Vec<u8>) -> LoadedImage {
+    let rgba = RgbaImage::from_raw(width, height, pixels).expect("pixel buffer matches dimensions");
+    let mut image = DynamicImage::ImageRgba8(rgba);
+    if let Some(orientation) = exif_orientation(path) {
+        image.apply_orientation(orientation);
+    }
+    let (width, height) = (image.width(), image.height());
+    LoadedImage {
+        handle: Handle::from_rgba(width, height, image.as_bytes().to_vec()),
+        image,
+        width,
+        height,
+        path: path.to_path_buf(),
+    }
+}
+
 /// Decode the image at `path` on a background thread.
 ///
 /// # Errors
@@ -114,16 +163,7 @@ fn load_image_sync(path: &Path) -> Result<LoadedImage, LoadError> {
 
     // Standard image formats via the 'image' crate
     let img = image::open(path)?;
-    let (width, height) = (img.width(), img.height());
-    let handle = display_handle(&img);
-
-    Ok(LoadedImage {
-        handle,
-        image: img,
-        width,
-        height,
-        path: path.to_path_buf(),
-    })
+    Ok(loaded_image(path, img))
 }
 
 /// Load full JPEG using turbojpeg (faster than zune/image crate)
@@ -162,16 +202,7 @@ fn load_jpeg_full(path: &Path) -> Result<LoadedImage, LoadError> {
 
     let rgba_image = RgbaImage::from_raw(width as u32, height as u32, pixels)
         .expect("pixel buffer matches dimensions");
-    let image = DynamicImage::ImageRgba8(rgba_image);
-    let handle = display_handle(&image);
-
-    Ok(LoadedImage {
-        handle,
-        image,
-        width: width as u32,
-        height: height as u32,
-        path: path.to_path_buf(),
-    })
+    Ok(loaded_image(path, DynamicImage::ImageRgba8(rgba_image)))
 }
 
 fn is_zune_supported(extension: &str) -> bool {
@@ -212,30 +243,12 @@ fn load_with_zune(path: &Path) -> Result<LoadedImage, LoadError> {
 
     let rgba_image = RgbaImage::from_raw(width as u32, height as u32, pixels)
         .expect("pixel buffer matches dimensions");
-    let image = DynamicImage::ImageRgba8(rgba_image);
-    let handle = display_handle(&image);
-
-    Ok(LoadedImage {
-        handle,
-        image,
-        width: width as u32,
-        height: height as u32,
-        path: path.to_path_buf(),
-    })
+    Ok(loaded_image(path, DynamicImage::ImageRgba8(rgba_image)))
 }
 
 fn load_with_image(path: &Path) -> Result<LoadedImage, LoadError> {
     let img = image::open(path)?;
-    let (width, height) = (img.width(), img.height());
-    let handle = display_handle(&img);
-
-    Ok(LoadedImage {
-        handle,
-        image: img,
-        width,
-        height,
-        path: path.to_path_buf(),
-    })
+    Ok(loaded_image(path, img))
 }
 
 /// Decode the image at `path` and downscale it to fit `max_size` on its longest
@@ -288,36 +301,12 @@ fn load_thumbnail_sync(path: &Path, max_size: u32) -> Result<LoadedImage, LoadEr
     // 1. For JPEGs, try EXIF thumbnail extraction (no full decode)
     if matches!(extension.as_str(), "jpg" | "jpeg") {
         if let Ok((width, height, pixels)) = extract_exif_thumbnail(path, max_size) {
-            let handle = Handle::from_rgba(width, height, pixels.clone());
-
-            let rgba_image = RgbaImage::from_raw(width, height, pixels)
-                .expect("pixel buffer matches dimensions");
-            let dynamic_image = DynamicImage::ImageRgba8(rgba_image);
-
-            return Ok(LoadedImage {
-                handle,
-                image: dynamic_image,
-                width,
-                height,
-                path: path.to_path_buf(),
-            });
+            return Ok(loaded_thumbnail(path, width, height, pixels));
         }
 
         // 2. For JPEGs without EXIF, use turbojpeg with DCT scaling (4-8x faster)
         if let Ok((width, height, pixels)) = decode_jpeg_scaled(path, max_size) {
-            let handle = Handle::from_rgba(width, height, pixels.clone());
-
-            let rgba_image = RgbaImage::from_raw(width, height, pixels)
-                .expect("pixel buffer matches dimensions");
-            let dynamic_image = DynamicImage::ImageRgba8(rgba_image);
-
-            return Ok(LoadedImage {
-                handle,
-                image: dynamic_image,
-                width,
-                height,
-                path: path.to_path_buf(),
-            });
+            return Ok(loaded_thumbnail(path, width, height, pixels));
         }
     }
 
@@ -331,19 +320,7 @@ fn load_thumbnail_sync(path: &Path, max_size: u32) -> Result<LoadedImage, LoadEr
         decode_and_resize_image(path, max_size)?
     };
 
-    let handle = Handle::from_rgba(width, height, pixels.clone());
-
-    let rgba_image =
-        RgbaImage::from_raw(width, height, pixels).expect("pixel buffer matches dimensions");
-    let dynamic_image = DynamicImage::ImageRgba8(rgba_image);
-
-    Ok(LoadedImage {
-        handle,
-        image: dynamic_image,
-        width,
-        height,
-        path: path.to_path_buf(),
-    })
+    Ok(loaded_thumbnail(path, width, height, pixels))
 }
 
 /// Extract embedded EXIF thumbnail from JPEG files.
