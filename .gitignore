@@ -1,8 +1,4 @@
 **/.cargo/
-/debian/*debhelper*
-/debian/cosmic-viewer.substvars
-/debian/cosmic-viewer/
-/debian/files
 /target/
 **/target/
 /vendor.tar
