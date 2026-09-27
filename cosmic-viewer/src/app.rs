@@ -1782,7 +1782,9 @@ impl Application for CosmicViewer {
         (viewer, Task::batch(tasks))
     }
 
-    fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
+    // WMDE: the title bar holds only the title and the window buttons, so the menu bar lives on
+    // the strip under it, after the nav bar toggle.
+    fn header_strip(&self) -> Vec<Element<'_, Self::Message>> {
         let has_image = self.viewport.image().is_some();
 
         vec![menu_bar(
