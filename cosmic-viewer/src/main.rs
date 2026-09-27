@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 pub mod app;
+pub mod failure;
 pub mod icon_cache;
 pub mod key_binds;
 pub mod localize;
@@ -30,6 +31,11 @@ pub fn icon_cache_get(name: &'static str) -> icon::Handle {
 }
 
 fn main() -> cosmic::iced::Result {
+    // WMDE: without a subscriber every `tracing::error!` went nowhere. RUST_LOG picks the
+    // level; unset, errors only.
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
     ICON_CACHE.get_or_init(|| Mutex::new(IconCache::new()));
 
     let settings = Settings::default()

@@ -69,6 +69,14 @@ impl ImageCache {
         self.full_images.lock().ok()?.get(path).cloned()
     }
 
+    /// WMDE: whether the full picture is cached, without cloning it as `get_full` does.
+    #[must_use]
+    pub fn contains_full(&self, path: &PathBuf) -> bool {
+        self.full_images
+            .lock()
+            .is_ok_and(|cache| cache.contains(path))
+    }
+
     pub fn insert_full(&self, path: PathBuf, image: CachedImage) {
         self.clear_pending(&path);
         if let Ok(mut cache) = self.full_images.lock() {

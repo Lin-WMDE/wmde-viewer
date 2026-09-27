@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::{
-    fl, icon_cache_get,
+    failure, fl, icon_cache_get,
     key_binds::{self, MenuAction, keyboard_shortcut_handler},
     menu::menu_bar,
     message::{
@@ -62,7 +62,7 @@ use viewer_canvas::{CanvasImage, CanvasMessage, ToolKind, ViewportManager};
 use viewer_config::{AppTheme, ViewerConfig};
 use viewer_core::{
     CachedImage, ClipboardImage, ImageCache, NavState, get_image_dir, image_mime_type,
-    is_supported_image, load_image, load_thumbnail, read_dpi, scan_dir,
+    is_supported_image, load_image, load_thumbnail, read_dpi, save_image, scan_dir,
 };
 use viewer_toolbar::{ItemPriority, ToolbarItem, ToolbarMode, responsive_toolbar};
 use viewer_tools::{
@@ -145,6 +145,11 @@ pub struct CosmicViewer {
     watcher_rescan_pending: bool,
     was_narrow: bool,
     toasts: Toasts<ViewerMessage>,
+    /// WMDE: why the picture at this path did not open, shown in place of the picture.
+    load_error: Option<(PathBuf, String)>,
+    /// WMDE: the file whose picture the canvas holds. While the next picture loads the canvas
+    /// keeps the previous one, and a save must not write it over the file now selected.
+    canvas_path: Option<PathBuf>,
     about: About,
 }
 
@@ -172,6 +177,124 @@ impl CosmicViewer {
             Some(PendingAction::Quit) => self.update(ViewerMessage::Quit),
             None => Task::none(),
         }
+    }
+
+    // WMDE: an action that failed says so twice, in the journal and as a toast. A button
+    // that silently did nothing is not acceptable.
+    fn complain(
+        &mut self,
+        action: &str,
+        error: &str,
+        message: String,
+    ) -> Task<Action<ViewerMessage>> {
+        tracing::error!("cannot {action}: {error}");
+        self.show_error(message)
+    }
+
+    fn show_error(&mut self, message: String) -> Task<Action<ViewerMessage>> {
+        let toast = toaster::Toast::new(message).duration(toaster::Duration::Long);
+        self.toasts.push(toast).map(Action::App)
+    }
+
+    /// Write the edited picture to `path`. `Err` carries the toast that says why it was not.
+    fn write_edits(&mut self, path: &Path) -> Result<(), Task<Action<ViewerMessage>>> {
+        if let Some(current) = self.nav.current().cloned()
+            && self.canvas_path.as_ref() != Some(&current)
+        {
+            // The canvas holds another picture while this one loads, or none at all.
+            let reason = if self.canvas_path.is_some() || self.cache.is_pending(&current) {
+                fl!("error-reason-still-loading")
+            } else if let Some((_, reason)) = self
+                .load_error
+                .as_ref()
+                .filter(|(failed, _)| failed == &current)
+            {
+                reason.clone()
+            } else {
+                fl!("error-reason-no-image")
+            };
+            let detail = format!("the canvas does not hold {}", current.display());
+            return Err(self.complain(
+                "save the image",
+                &detail,
+                fl!("error-save", error = reason),
+            ));
+        }
+        let Some(image) = self.flatten_image() else {
+            return Err(self.complain(
+                "save the image",
+                "no image is open",
+                fl!("error-save", error = fl!("error-reason-no-image")),
+            ));
+        };
+        save_image(&image, path).map_err(|err| {
+            self.complain(
+                &format!("save {}", path.display()),
+                &err.to_string(),
+                fl!("error-save", error = failure::save_reason(&err)),
+            )
+        })
+    }
+
+    /// Put the full picture of `path` from the cache on the canvas.
+    fn show_cached(&mut self, path: PathBuf) {
+        if let Some(cached) = self.cache.get_full(&path) {
+            self.viewport.set_image(
+                Some(CanvasImage {
+                    handle: cached.handle,
+                    width: cached.width,
+                    height: cached.height,
+                }),
+                Some(cached.image),
+            );
+            self.canvas_path = Some(path);
+        }
+    }
+
+    /// Empty the canvas and leave nothing half-edited on it: the edits, the tool, the text being
+    /// typed, the colour picker and the text format menu go with the picture.
+    fn clear_canvas(&mut self) {
+        self.viewport.cancel_tool();
+        self.viewport.revert_all();
+        self.viewport.set_image(None, None);
+        self.canvas_path = None;
+        self.reset_editing();
+    }
+
+    /// Drop the editing state that points into the edits: after `revert_all` a selected or
+    /// moved annotation index would point past the end of the empty list.
+    fn reset_editing(&mut self) {
+        self.viewport.move_mode = false;
+        self.viewport.select_target = None;
+        self.move_target = None;
+        self.move_start = None;
+        self.text_editing = false;
+        self.show_text_format_menu = false;
+        if self.color_picker.get_is_active() {
+            _ = self
+                .color_picker
+                .update::<ViewerMessage>(ColorPickerUpdate::ToggleColorPicker);
+        }
+    }
+
+    /// Save the edited picture over its own file and reload it. `Err` carries the toast; the
+    /// edits are kept then.
+    fn save_in_place(
+        &mut self,
+    ) -> Result<Task<Action<ViewerMessage>>, Task<Action<ViewerMessage>>> {
+        let Some(path) = self.nav.current().cloned() else {
+            return Err(self.complain(
+                "save the image",
+                "no image is open",
+                fl!("error-save", error = fl!("error-reason-no-image")),
+            ));
+        };
+        self.write_edits(&path)?;
+        self.viewport.revert_all();
+        self.cache.remove_full(&path);
+        self.viewport.cancel_tool();
+        self.text_editing = false;
+        Ok(self.load_full_image(path))
     }
 
     fn is_narrow(&self) -> bool {
@@ -331,7 +454,9 @@ impl CosmicViewer {
                                 loaded.height,
                             )))
                         }
-                        Err(_) => Action::App(ViewerMessage::Image(ImageMessage::LoadError(path))),
+                        Err(_) => {
+                            Action::App(ViewerMessage::Image(ImageMessage::ThumbnailError(path)))
+                        }
                     }
                 })
             })
@@ -378,7 +503,11 @@ impl CosmicViewer {
                     );
                     Action::App(ViewerMessage::Image(ImageMessage::ImageReady(loaded.path)))
                 }
-                Err(_) => Action::App(ViewerMessage::Image(ImageMessage::LoadError(path))),
+                Err(err) => Action::App(ViewerMessage::Image(ImageMessage::LoadError {
+                    path,
+                    reason: failure::load_reason(&err),
+                    detail: err.to_string(),
+                })),
             }
         })
         .chain(window_title)
@@ -1512,6 +1641,8 @@ impl Application for CosmicViewer {
             watcher_rescan_pending: false,
             was_narrow: false,
             toasts: Toasts::new(ViewerMessage::CloseToast),
+            load_error: None,
+            canvas_path: None,
             about: About::default()
                 .name(fl!("app-name"))
                 .icon(icon::from_name(Self::APP_ID))
@@ -1696,8 +1827,28 @@ impl Application for CosmicViewer {
     #[allow(clippy::too_many_lines)]
     fn view(&self) -> Element<'_, Self::Message> {
         let has_image = self.viewport.image().is_some();
+        // WMDE: the picture that did not open says why, in its own place.
+        let load_error = self
+            .load_error
+            .as_ref()
+            .filter(|(path, _)| self.nav.current() == Some(path));
         let content: Element<'_, Self::Message> = if has_image {
             self.viewport.element().map(ViewerMessage::Canvas)
+        } else if let Some((path, reason)) = load_error {
+            let file = path.file_name().map_or_else(
+                || fl!("unnamed-file"),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            Column::new()
+                .push(Space::new().height(Length::Fill))
+                .push(text::heading(fl!("error-open-title", file = file.as_str())).center())
+                .push(text::body(failure::sentence(reason)).center())
+                .push(Space::new().height(Length::Fill))
+                .spacing(cosmic::theme::active().cosmic().spacing.space_xs)
+                .align_x(Horizontal::Center)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
         } else {
             Column::new()
                 .push(Space::new().height(Length::Fill))
@@ -1714,46 +1865,48 @@ impl Application for CosmicViewer {
         let nav_collapsed = !self.core().nav_bar_active();
         let cur_idx = self.nav.index().unwrap_or(0);
 
-        let image_area: Element<'_, Self::Message> = if nav_collapsed && has_image {
-            let has_prev = cur_idx > 0;
-            let has_next = cur_idx + 1 < self.nav.total();
+        // WMDE: a picture that did not open keeps the buttons that lead past it.
+        let image_area: Element<'_, Self::Message> =
+            if nav_collapsed && (has_image || load_error.is_some()) {
+                let has_prev = cur_idx > 0;
+                let has_next = cur_idx + 1 < self.nav.total();
 
-            let nav_btn = |icon_name: &'static str,
-                           msg: ViewerMessage,
-                           enabled: bool|
-             -> Element<'_, Self::Message> {
-                let mut btn = button::icon(icon::from_name(icon_name).size(24))
-                    .class(cosmic::theme::Button::Icon);
-                if enabled {
-                    btn = btn.on_press(msg);
-                }
-                container(btn).center_y(Length::Fill).into()
+                let nav_btn = |icon_name: &'static str,
+                               msg: ViewerMessage,
+                               enabled: bool|
+                 -> Element<'_, Self::Message> {
+                    let mut btn = button::icon(icon::from_name(icon_name).size(24))
+                        .class(cosmic::theme::Button::Icon);
+                    if enabled {
+                        btn = btn.on_press(msg);
+                    }
+                    container(btn).center_y(Length::Fill).into()
+                };
+
+                Row::new()
+                    .push(nav_btn(
+                        "go-previous-symbolic",
+                        ViewerMessage::Nav(NavMessage::GridActivate(cur_idx.saturating_sub(1))),
+                        has_prev,
+                    ))
+                    .push(container(content).width(Length::Fill).height(Length::Fill))
+                    .push(nav_btn(
+                        "go-next-symbolic",
+                        ViewerMessage::Nav(NavMessage::GridActivate(
+                            (cur_idx + 1).min(self.nav.total().saturating_sub(1)),
+                        )),
+                        has_next,
+                    ))
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                container(content)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
             };
-
-            Row::new()
-                .push(nav_btn(
-                    "go-previous-symbolic",
-                    ViewerMessage::Nav(NavMessage::GridActivate(cur_idx.saturating_sub(1))),
-                    has_prev,
-                ))
-                .push(container(content).width(Length::Fill).height(Length::Fill))
-                .push(nav_btn(
-                    "go-next-symbolic",
-                    ViewerMessage::Nav(NavMessage::GridActivate(
-                        (cur_idx + 1).min(self.nav.total().saturating_sub(1)),
-                    )),
-                    has_next,
-                ))
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else {
-            container(content)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        };
 
         let main = Column::new()
             .push(image_area)
@@ -1995,7 +2148,7 @@ impl Application for CosmicViewer {
                         }
                         Err(e) => {
                             tracing::error!("File dialog error: {e}");
-                            Action::App(ViewerMessage::Cancelled)
+                            Action::App(ViewerMessage::ShowError(fl!("error-dialog")))
                         }
                     }
                 });
@@ -2017,7 +2170,7 @@ impl Application for CosmicViewer {
                         }
                         Err(e) => {
                             tracing::error!("Folder dialog error: {e}");
-                            Action::App(ViewerMessage::Cancelled)
+                            Action::App(ViewerMessage::ShowError(fl!("error-dialog")))
                         }
                     }
                 });
@@ -2025,25 +2178,31 @@ impl Application for CosmicViewer {
             ViewerMessage::Open(path) => tasks.push(self.open_path(path)),
             ViewerMessage::OpenRecent(_idx) => {}
             ViewerMessage::OpenContaining => {
-                if let Some(dir) = self.nav.dir()
-                    && let Err(e) = open::that(dir)
-                {
-                    tracing::error!("Failed to open containing folder: {e}");
+                // WMDE: off the thread that draws the window. `open::that` waits for the opener
+                // to exit, which is what reports a failure (no handler for folders, a folder
+                // gone); `that_detached` would return before it and report nothing. A plain
+                // thread, not tokio's blocking pool: the runtime waits for that pool on exit,
+                // and a file manager kept in the foreground would keep the viewer alive.
+                if let Some(dir) = self.nav.dir().map(Path::to_path_buf) {
+                    let (sender, receiver) = tokio::sync::oneshot::channel();
+                    let opener_dir = dir.clone();
+                    std::thread::spawn(move || {
+                        _ = sender.send(open::that(opener_dir).map_err(|err| err.to_string()));
+                    });
+                    tasks.push(future(async move {
+                        let failure = match receiver.await {
+                            Ok(Ok(())) => return Action::App(ViewerMessage::Cancelled),
+                            Ok(Err(err)) => err,
+                            Err(err) => err.to_string(),
+                        };
+                        tracing::error!("cannot open {}: {failure}", dir.display());
+                        Action::App(ViewerMessage::ShowError(fl!("error-open-folder")))
+                    }));
                 }
             }
-            ViewerMessage::Save => {
-                if let (Some(image), Some(path)) = (self.flatten_image(), self.nav.current()) {
-                    if let Err(e) = image.save(path) {
-                        tracing::error!("Failed to save image: {e}");
-                    } else {
-                        self.viewport.revert_all();
-                        self.cache.remove_full(path);
-                        self.viewport.cancel_tool();
-                        self.text_editing = false;
-                        tasks.push(self.load_full_image(path.clone()));
-                    }
-                }
-            }
+            ViewerMessage::Save => match self.save_in_place() {
+                Ok(task) | Err(task) => tasks.push(task),
+            },
             ViewerMessage::SaveAs => {
                 let current = self.nav.current();
                 let suggested = current
@@ -2064,29 +2223,31 @@ impl Application for CosmicViewer {
                     }
 
                     match dialog.save_file().await {
+                        // WMDE: no URL is how the rfd backend reports both a cancel and a
+                        // portal failure. It was an `expect`, and the release profile aborts on
+                        // panic, so cancelling Save As closed the viewer and lost the edits.
                         Ok(response) => response
                             .url()
-                            .expect("save dialog response carries a valid URL")
-                            .to_file_path()
-                            .map_or_else(
-                                |()| Action::App(ViewerMessage::Cancelled),
-                                |path| Action::App(ViewerMessage::SavedAs(path)),
-                            ),
+                            .and_then(|url| url.to_file_path().ok())
+                            .map_or(Action::App(ViewerMessage::Cancelled), |path| {
+                                Action::App(ViewerMessage::SavedAs(path))
+                            }),
                         Err(file_chooser::Error::Cancelled) => {
                             Action::App(ViewerMessage::Cancelled)
                         }
                         Err(e) => {
                             tracing::error!("Save dialog error: {e}");
-                            Action::App(ViewerMessage::Cancelled)
+                            Action::App(ViewerMessage::ShowError(fl!("error-dialog")))
                         }
                     }
                 });
             }
             ViewerMessage::SavedAs(path) => {
-                if let Some(image) = self.flatten_image()
-                    && let Err(e) = image.save(&path)
-                {
-                    tracing::error!("Failed to save image: {e}");
+                // WMDE: a failed save keeps the edits and cancels whatever was waiting on it;
+                // carrying on would drop the edits the save was meant to keep.
+                if let Err(complaint) = self.write_edits(&path) {
+                    self.unsaved_dialog = None;
+                    return complaint;
                 }
 
                 self.viewport.cancel_tool();
@@ -2105,8 +2266,14 @@ impl Application for CosmicViewer {
             }
             ViewerMessage::Unsaved(choice) => match choice {
                 UnsavedChoice::Save => {
-                    let save = self.update(ViewerMessage::Save);
-                    return Task::batch([save, self.resolve_pending()]);
+                    return match self.save_in_place() {
+                        Ok(reload) => Task::batch([reload, self.resolve_pending()]),
+                        // WMDE: see SavedAs - the pending action is dropped with the edits kept.
+                        Err(complaint) => {
+                            self.unsaved_dialog = None;
+                            complaint
+                        }
+                    };
                 }
                 UnsavedChoice::SaveAs => return self.update(ViewerMessage::SaveAs),
                 UnsavedChoice::Discard => {
@@ -2132,6 +2299,9 @@ impl Application for CosmicViewer {
             ViewerMessage::WatcherEvent(evt) => {
                 match &evt {
                     WatcherEvent::Modified(path) if path.exists() => {
+                        // WMDE: a load already under way read the file before this change;
+                        // the rescan after it starts a fresh one.
+                        self.cache.clear_pending(path);
                         self.cache.remove_full(path);
                         self.cache.remove_thumbnail(path);
                     }
@@ -2226,7 +2396,7 @@ impl Application for CosmicViewer {
             }
             ViewerMessage::WallpaperResult(result) => {
                 if let Err(err) = result {
-                    tracing::error!("Failed to set wallpaper: {err}");
+                    tasks.push(self.complain("set the wallpaper", &err, fl!("error-wallpaper")));
                 }
             }
             ViewerMessage::MoveToTrash => {
@@ -2244,30 +2414,15 @@ impl Application for CosmicViewer {
                     if let Some(idx) = next_idx {
                         tasks.push(self.update(ViewerMessage::Nav(NavMessage::GridActivate(idx))));
                     } else {
-                        self.viewport.set_image(None, None);
+                        self.clear_canvas();
                     }
 
                     // Trash the file
-                    let file_name = path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .map_or_else(|| fl!("unnamed-file"), str::to_string);
-                    let paths: Arc<[PathBuf]> = Arc::from(vec![path.clone()]);
-
                     tasks.push(future(async move {
                         let result = trash::delete(&path)
-                            .map_err(|e| format!("Failed to move to trash: {e}"));
-                        Action::App(ViewerMessage::TrashResult(result))
+                            .map_err(|e| (failure::trash_reason(&e), format!("{e:?}")));
+                        Action::App(ViewerMessage::TrashResult(path, result))
                     }));
-
-                    let label = fl!("moved-to-trash", file = file_name.as_str());
-                    // Auto-dismiss (the Task `push` returns) needs libcosmic's "tokio" feature.
-                    let toast = toaster::Toast::new(label)
-                        .action(fl!("toast-undo"), move |id| {
-                            ViewerMessage::UndoTrash(id, paths.clone())
-                        })
-                        .duration(toaster::Duration::Long);
-                    tasks.push(self.toasts.push(toast).map(Action::App));
                 }
             }
             ViewerMessage::UndoTrash(toast_id, recently_trashed) => {
@@ -2277,19 +2432,37 @@ impl Application for CosmicViewer {
                     // Rescan trash to find matching TrashItem entries
                     let mut items_to_restore = Vec::new();
 
-                    if let Ok(trash_items) = trash::os_limited::list() {
-                        for path in &*recently_trashed {
-                            let target_parent = path.parent().unwrap_or_else(|| Path::new("/"));
-                            let target_name =
-                                path.file_name().unwrap_or_default().to_string_lossy();
+                    // WMDE: an unreadable trash is reported instead of restoring nothing.
+                    let trash_items = match trash::os_limited::list() {
+                        Ok(items) => items,
+                        Err(e) => {
+                            tracing::error!("cannot list the trash: {e:?}");
+                            return Action::App(ViewerMessage::ShowError(fl!(
+                                "error-restore",
+                                error = failure::trash_reason(&e)
+                            )));
+                        }
+                    };
+                    for path in &*recently_trashed {
+                        // WMDE: the trash records the canonical parent; a path given relative
+                        // or through a linked folder is compared the same way.
+                        let given_parent = path
+                            .parent()
+                            .filter(|dir| !dir.as_os_str().is_empty())
+                            .unwrap_or_else(|| Path::new("."));
+                        let target_parent = given_parent
+                            .canonicalize()
+                            .unwrap_or_else(|_| given_parent.to_path_buf());
+                        // WMDE: compared as OS strings: a lossy conversion never matches a
+                        // name that is not UTF-8.
+                        let target_name = path.file_name().unwrap_or_default();
 
-                            for item in &trash_items {
-                                if item.original_parent == target_parent
-                                    && item.name == target_name.as_ref()
-                                {
-                                    items_to_restore.push(item.clone());
-                                    break;
-                                }
+                        for item in &trash_items {
+                            if item.original_parent == target_parent
+                                && item.name.as_os_str() == target_name
+                            {
+                                items_to_restore.push(item.clone());
+                                break;
                             }
                         }
                     }
@@ -2297,10 +2470,21 @@ impl Application for CosmicViewer {
                 }));
             }
             ViewerMessage::UndoTrashStart(items) => {
-                if !items.is_empty() {
+                if items.is_empty() {
+                    // WMDE: the file left the trash some other way; Undo says so.
+                    tasks.push(self.complain(
+                        "restore from the trash",
+                        "no matching trash entry",
+                        fl!("error-restore", error = fl!("error-reason-not-in-trash")),
+                    ));
+                } else {
                     let restore = future(async move {
                         if let Err(e) = trash::os_limited::restore_all(items) {
-                            tracing::error!("failed to restore from trash: {e}");
+                            tracing::error!("cannot restore from the trash: {e:?}");
+                            return Action::App(ViewerMessage::ShowError(fl!(
+                                "error-restore",
+                                error = failure::trash_reason(&e)
+                            )));
                         }
 
                         // Trigger a directory rescan
@@ -2311,11 +2495,31 @@ impl Application for CosmicViewer {
                     tasks.push(restore.chain(self.reload_image_list()));
                 }
             }
-            ViewerMessage::TrashResult(result) => {
-                if let Err(e) = result {
-                    tracing::error!("failed to move to trash: {e}");
+            ViewerMessage::TrashResult(path, result) => {
+                let file_name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map_or_else(|| fl!("unnamed-file"), str::to_string);
+                match result {
+                    Ok(()) => {
+                        let paths: Arc<[PathBuf]> = Arc::from(vec![path]);
+                        let label = fl!("moved-to-trash", file = file_name.as_str());
+                        // Auto-dismiss (the Task `push` returns) needs libcosmic's "tokio" feature.
+                        let toast = toaster::Toast::new(label)
+                            .action(fl!("toast-undo"), move |id| {
+                                ViewerMessage::UndoTrash(id, paths.clone())
+                            })
+                            .duration(toaster::Duration::Long);
+                        tasks.push(self.toasts.push(toast).map(Action::App));
+                    }
+                    Err((reason, detail)) => tasks.push(self.complain(
+                        &format!("move {} to the trash", path.display()),
+                        &detail,
+                        fl!("error-trash", file = file_name.as_str(), error = reason),
+                    )),
                 }
             }
+            ViewerMessage::ShowError(message) => tasks.push(self.show_error(message)),
             ViewerMessage::CloseToast(toast_id) => {
                 self.toasts.remove(toast_id);
             }
@@ -2669,8 +2873,7 @@ impl Application for CosmicViewer {
             }
             ViewerMessage::Nav(msg) => match msg {
                 NavMessage::ScanComplete(dir, images, select) => {
-                    self.viewport.cancel_tool();
-                    self.viewport.set_image(None, None);
+                    self.clear_canvas();
 
                     self.nav.set_images(dir, images, select.as_deref());
 
@@ -2729,7 +2932,7 @@ impl Application for CosmicViewer {
                                         ))
                                     }
                                     Err(_) => Action::App(ViewerMessage::Image(
-                                        ImageMessage::LoadError(path),
+                                        ImageMessage::ThumbnailError(path),
                                     )),
                                 }
                             }));
@@ -2766,16 +2969,9 @@ impl Application for CosmicViewer {
                                 .update::<ViewerMessage>(ColorPickerUpdate::ToggleColorPicker);
                         }
 
-                        if let Some(cached) = self.cache.get_full(&path) {
+                        if self.cache.get_full(&path).is_some() {
                             self.viewport.revert_all();
-                            self.viewport.set_image(
-                                Some(CanvasImage {
-                                    handle: cached.handle,
-                                    width: cached.width,
-                                    height: cached.height,
-                                }),
-                                Some(cached.image),
-                            );
+                            self.show_cached(path.clone());
                         }
                         // Don't clear the viewport - keep the previous image
                         // visible until the new one loads
@@ -2855,6 +3051,13 @@ impl Application for CosmicViewer {
                     }
                 }
                 ImageMessage::ImageReady(path) => {
+                    if self
+                        .load_error
+                        .as_ref()
+                        .is_some_and(|(failed, _)| failed == &path)
+                    {
+                        self.load_error = None;
+                    }
                     if let Some(idx) = self.nav.index() {
                         if self.nav.current() == Some(&path) {
                             // Clear any tool that is active when reselecting a new image.
@@ -2862,23 +3065,63 @@ impl Application for CosmicViewer {
                                 self.viewport.cancel_tool();
                             }
 
-                            // Set the selected image to canvas image.
-                            if let Some(cached) = self.cache.get_full(&path) {
-                                self.viewport.set_image(
-                                    Some(CanvasImage {
-                                        handle: cached.handle,
-                                        width: cached.width,
-                                        height: cached.height,
-                                    }),
-                                    Some(cached.image),
-                                );
+                            // WMDE: edits made while the previous picture stood in for this
+                            // one belong to that picture and do not carry over.
+                            if self.canvas_path.as_ref() != Some(&path) {
+                                self.viewport.revert_all();
+                                self.reset_editing();
                             }
+                            // Set the selected image to canvas image.
+                            self.show_cached(path);
                         }
                         tasks.push(self.load_nearby_thumbnails(idx, 5));
                     }
                 }
-                ImageMessage::LoadError(path) => {
+                ImageMessage::LoadError {
+                    path,
+                    reason,
+                    detail,
+                } => {
                     self.cache.clear_pending(&path);
+                    // WMDE: a load started before the file last changed can fail after a
+                    // later one succeeded; the cached picture is the newer word.
+                    let superseded = self.cache.contains_full(&path);
+                    let reported = self
+                        .load_error
+                        .as_ref()
+                        .is_some_and(|(failed, _)| failed == &path);
+                    if superseded || self.nav.current() != Some(&path) {
+                        // Superseded, or a neighbour loaded ahead of time: nothing to show.
+                    } else if self.canvas_path.as_ref() == Some(&path) && self.has_unsaved_edits() {
+                        // WMDE: the file changed on disk under the edits and no longer reads.
+                        // The canvas is this picture with the edits, which Save As can still
+                        // keep, so it stays. Each rescan retries the load; one toast is enough.
+                        if !reported {
+                            let file = path.file_name().map_or_else(
+                                || fl!("unnamed-file"),
+                                |name| name.to_string_lossy().into_owned(),
+                            );
+                            let message =
+                                fl!("error-open", file = file.as_str(), error = reason.as_str());
+                            tasks.push(self.complain(
+                                &format!("reload {}", path.display()),
+                                &detail,
+                                message,
+                            ));
+                            self.load_error = Some((path, reason));
+                        }
+                    } else {
+                        // WMDE: the canvas shows the picture that failed, not the one before
+                        // it, which Delete, Save and the wallpaper action would otherwise have
+                        // taken for it.
+                        if !reported {
+                            tracing::error!("cannot open {}: {detail}", path.display());
+                        }
+                        self.clear_canvas();
+                        self.load_error = Some((path, reason));
+                    }
+                }
+                ImageMessage::ThumbnailError(path) => {
                     self.cache.clear_pending_thumbnail(&path);
                 }
             },
@@ -3235,8 +3478,14 @@ impl Application for CosmicViewer {
                 {
                     if let Some(color) = self.color_picker.get_applied_color() {
                         self.annotate_color = AnnotateColor(color);
-                        if let Some(select_target) = self.viewport.select_target {
-                            self.viewport.operations_mut()[select_target].set_color(color);
+                        // WMDE: `get_mut`, not indexing: a stale index panicked, and the
+                        // release profile aborts on panic.
+                        if let Some(op) = self
+                            .viewport
+                            .select_target
+                            .and_then(|target| self.viewport.operations_mut().get_mut(target))
+                        {
+                            op.set_color(color);
                         }
 
                         self.save_last_color();
@@ -3278,17 +3527,8 @@ impl Application for CosmicViewer {
                         self.viewport.set_preview(None);
                         self.viewport.move_mode = false;
                         // Restore working image from cache so rotation etc. still works
-                        if let Some(path) = self.nav.current().cloned()
-                            && let Some(cached) = self.cache.get_full(&path)
-                        {
-                            self.viewport.set_image(
-                                Some(CanvasImage {
-                                    handle: cached.handle,
-                                    width: cached.width,
-                                    height: cached.height,
-                                }),
-                                Some(cached.image),
-                            );
+                        if let Some(path) = self.nav.current().cloned() {
+                            self.show_cached(path);
                         }
                     }
                     EditMessage::AnnotateStroke(size) => {
@@ -3298,8 +3538,11 @@ impl Application for CosmicViewer {
                             if let Some((&size, select_target)) =
                                 sizes.get(size).zip(self.viewport.select_target)
                             {
-                                self.viewport.operations_mut()[select_target]
-                                    .set_annotation_stroke(size);
+                                if let Some(op) =
+                                    self.viewport.operations_mut().get_mut(select_target)
+                                {
+                                    op.set_annotation_stroke(size);
+                                }
 
                                 self.annotate_stroke_size = size;
                                 if let Some(highlighter) =
@@ -4068,12 +4311,15 @@ impl Application for CosmicViewer {
             ViewerMessage::NavScroll(viewport) => {
                 self.cur_scroll = Some(viewport);
             }
-            ViewerMessage::LaunchUrl(url) => match open::that_detached(&url) {
-                Ok(()) => {}
-                Err(err) => {
-                    tracing::warn!("failed to open {:?}: {}", url, err);
+            ViewerMessage::LaunchUrl(url) => {
+                if let Err(err) = open::that_detached(&url) {
+                    tasks.push(self.complain(
+                        &format!("open {url}"),
+                        &err.to_string(),
+                        fl!("error-open-link"),
+                    ));
                 }
-            },
+            }
             ViewerMessage::HoverItem(img) => {
                 self.hovered_item = img;
             }

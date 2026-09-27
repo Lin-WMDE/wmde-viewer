@@ -69,7 +69,11 @@ pub enum ViewerMessage {
     MoveToTrash,
     UndoTrash(ToastId, Arc<[PathBuf]>),
     UndoTrashStart(Vec<TrashItem>),
-    TrashResult(Result<(), String>),
+    // WMDE: carries the path, so the "moved" toast appears only once the move succeeded. The
+    // error is the reason in the interface language and the detail for the journal.
+    TrashResult(PathBuf, Result<(), (String, String)>),
+    // WMDE: a failure already written to the journal, to be shown as a toast.
+    ShowError(String),
     Cancelled,
     Quit,
     CloseRequested,
@@ -103,7 +107,14 @@ pub enum ImageMessage {
     // path, width, height (handle is in cache)
     ThumbnailReady(PathBuf, u32, u32),
     ImageReady(PathBuf),
-    LoadError(PathBuf),
+    // WMDE: `reason` is shown in place of the picture, in the interface language, and `detail`
+    // goes to the journal; a thumbnail fails quietly.
+    LoadError {
+        path: PathBuf,
+        reason: String,
+        detail: String,
+    },
+    ThumbnailError(PathBuf),
 }
 
 #[derive(Debug, Clone)]

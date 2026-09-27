@@ -151,3 +151,25 @@ size-bytes = ({ $bytes } { $count ->
 })
 # chrono strftime pattern for the created / modified / accessed dates
 date-time-format = %d.%m.%Y %H:%M:%S
+# WMDE: failures, shown as a toast or in place of the picture
+error-open-title = Не вдалося відкрити «{ $file }»
+error-open = Не вдалося відкрити «{ $file }»: { $error }
+error-save = Не вдалося зберегти зображення: { $error }
+error-open-folder = Не вдалося відкрити теку
+error-open-link = Не вдалося відкрити посилання
+error-dialog = Не вдалося показати діалог вибору файлу
+error-wallpaper = Не вдалося зробити зображення тлом
+error-trash = Не вдалося пересунути «{ $file }» до смітника: { $error }
+error-restore = Не вдалося відновити зі смітника: { $error }
+# WMDE: the reason put after the colon of a failure
+error-reason-no-image = зображення не відкрито
+error-reason-still-loading = зображення ще завантажується
+error-reason-not-in-trash = файлу вже немає у смітнику
+error-reason-not-found = файл не знайдено
+error-reason-permission = немає доступу
+error-reason-read-only = файлова система лише для читання
+error-reason-no-space = на диску немає місця
+error-reason-unreadable = файл пошкоджено або його формат не підтримується
+error-reason-unwritable = зображення не можна записати в цьому форматі
+error-reason-name-taken = файл із такою назвою вже існує
+error-reason-system = сталася системна помилка

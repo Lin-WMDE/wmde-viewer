@@ -149,3 +149,25 @@ size-bytes = ({ $bytes } { $count ->
 })
 # chrono strftime pattern for the created / modified / accessed dates
 date-time-format = %a %d %b %Y %I:%M:%S %p %Z
+# WMDE: failures, shown as a toast or in place of the picture
+error-open-title = Could not open { $file }
+error-open = Could not open { $file }: { $error }
+error-save = Could not save the image: { $error }
+error-open-folder = Could not open the folder
+error-open-link = Could not open the link
+error-dialog = Could not show the file dialog
+error-wallpaper = Could not set the wallpaper
+error-trash = Could not move { $file } to trash: { $error }
+error-restore = Could not restore from trash: { $error }
+# WMDE: the reason put after the colon of a failure
+error-reason-no-image = no image is open
+error-reason-still-loading = the picture is still loading
+error-reason-not-in-trash = the file is no longer in the trash
+error-reason-not-found = the file was not found
+error-reason-permission = access denied
+error-reason-read-only = the file system is read-only
+error-reason-no-space = no space left on the disk
+error-reason-unreadable = the file is damaged or its format is not supported
+error-reason-unwritable = the image cannot be written in this format
+error-reason-name-taken = a file with this name already exists
+error-reason-system = a system error occurred
