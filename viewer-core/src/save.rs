@@ -48,7 +48,11 @@ pub fn save_image(image: &DynamicImage, path: &Path) -> Result<(), SaveError> {
     }
 
     let mut encoded = Cursor::new(Vec::new());
-    image.write_to(&mut encoded, format)?;
+    let converted = for_encoder(image, format);
+    converted
+        .as_ref()
+        .unwrap_or(image)
+        .write_to(&mut encoded, format)?;
     let encoded = encoded.into_inner();
 
     match &existing {
@@ -64,6 +68,79 @@ pub fn save_image(image: &DynamicImage, path: &Path) -> Result<(), SaveError> {
         },
     }
     Ok(())
+}
+
+// WMDE: the loader hands over a picture in its own type - grey, 16-bit, float - and not every
+// encoder takes every type. JPEG, WebP, BMP and TGA convert by themselves inside `write_to`;
+// the others refuse what they do not take. This brings the picture to the nearest type the
+// encoder does take, or `None` when it takes the picture as it is.
+fn for_encoder(image: &DynamicImage, format: ImageFormat) -> Option<DynamicImage> {
+    use DynamicImage as D;
+    let alpha = image.color().has_alpha();
+    let float = matches!(image, D::ImageRgb32F(_) | D::ImageRgba32F(_));
+    let eight = || {
+        if alpha {
+            D::ImageRgba8(image.to_rgba8())
+        } else {
+            D::ImageRgb8(image.to_rgb8())
+        }
+    };
+    let sixteen = || {
+        if alpha {
+            D::ImageRgba16(image.to_rgba16())
+        } else {
+            D::ImageRgb16(image.to_rgb16())
+        }
+    };
+    match format {
+        ImageFormat::Gif | ImageFormat::Qoi => {
+            (!matches!(image, D::ImageRgb8(_) | D::ImageRgba8(_))).then(eight)
+        }
+        ImageFormat::Png | ImageFormat::Pnm | ImageFormat::Ico => float.then(sixteen),
+        ImageFormat::Avif => float.then(eight),
+        ImageFormat::Tiff => match image {
+            D::ImageLumaA8(_) => Some(D::ImageRgba8(image.to_rgba8())),
+            D::ImageLumaA16(_) => Some(D::ImageRgba16(image.to_rgba16())),
+            _ => None,
+        },
+        ImageFormat::Farbfeld => {
+            (!matches!(image, D::ImageRgba16(_))).then(|| D::ImageRgba16(image.to_rgba16()))
+        }
+        ImageFormat::Hdr => {
+            (!matches!(image, D::ImageRgb32F(_))).then(|| D::ImageRgb32F(image.to_rgb32f()))
+        }
+        ImageFormat::OpenExr => (!float).then(|| {
+            if alpha {
+                D::ImageRgba32F(image.to_rgba32f())
+            } else {
+                D::ImageRgb32F(image.to_rgb32f())
+            }
+        }),
+        _ => None,
+    }
+}
+
+/// Bits per channel the encoder for `format` keeps, 32 being float. The AVIF encoder takes 16
+/// bits and lowers them to 8 without a word.
+const fn held_bits(format: ImageFormat) -> u16 {
+    match format {
+        ImageFormat::Png | ImageFormat::Pnm | ImageFormat::Ico | ImageFormat::Farbfeld => 16,
+        ImageFormat::Tiff | ImageFormat::Hdr | ImageFormat::OpenExr => 32,
+        _ => 8,
+    }
+}
+
+/// Whether writing `image` in the format `path` names keeps its bits per channel. A path with
+/// no encoder in this build counts as keeping it: [`save_image`] refuses that one with its
+/// own reason.
+#[must_use]
+pub fn keeps_depth(image: &DynamicImage, path: &Path) -> bool {
+    let Ok(format) = ImageFormat::from_path(path) else {
+        return true;
+    };
+    let color = image.color();
+    let bits_per_channel = color.bits_per_pixel() / u16::from(color.channel_count());
+    !format.writing_enabled() || bits_per_channel <= held_bits(format)
 }
 
 /// Why a picture could not be renamed into place.

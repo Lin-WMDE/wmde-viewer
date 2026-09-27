@@ -310,3 +310,97 @@ async fn tiff_content_under_a_raw_name_is_refused() {
         8
     );
 }
+
+// WMDE: a picture is read in its own depth and channel layout, so saving it again keeps them.
+fn write_png(dir: &Path, name: &str, pixels: &[u8], color: image::ExtendedColorType) -> PathBuf {
+    let path = dir.join(name);
+    let mut bytes = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut bytes)
+        .write_image(pixels, 2, 1, color)
+        .unwrap();
+    std::fs::write(&path, bytes).unwrap();
+    path
+}
+
+#[tokio::test]
+async fn png_keeps_its_depth_and_channels() {
+    let dir = tempfile::tempdir().unwrap();
+    // Two 16-bit RGB pixels: values 8-bit would round away.
+    let deep: Vec<u8> = [1_u16, 258, 65535, 30000, 7, 12345]
+        .iter()
+        .flat_map(|value| value.to_ne_bytes())
+        .collect();
+    let path = write_png(
+        dir.path(),
+        "deep.png",
+        &deep,
+        image::ExtendedColorType::Rgb16,
+    );
+    let loaded = load_image(path).await.expect("16-bit PNG");
+    let image::DynamicImage::ImageRgb16(pixels) = &loaded.image else {
+        panic!("16-bit RGB PNG read as {:?}", loaded.image.color());
+    };
+    assert_eq!(pixels.get_pixel(0, 0).0, [1, 258, 65535]);
+    assert_eq!(pixels.get_pixel(1, 0).0, [30000, 7, 12345]);
+
+    let grey = write_png(
+        dir.path(),
+        "grey.png",
+        &[10, 200],
+        image::ExtendedColorType::L8,
+    );
+    let loaded = load_image(grey).await.expect("grey PNG");
+    assert_eq!(loaded.image.color(), image::ColorType::L8);
+
+    let rgb = write_png(
+        dir.path(),
+        "rgb.png",
+        &[1, 2, 3, 4, 5, 6],
+        image::ExtendedColorType::Rgb8,
+    );
+    let loaded = load_image(rgb).await.expect("RGB PNG");
+    assert_eq!(loaded.image.color(), image::ColorType::Rgb8);
+}
+
+#[tokio::test]
+async fn jpeg_keeps_grey_and_holds_no_alpha() {
+    let dir = tempfile::tempdir().unwrap();
+    let grey = dir.path().join("grey.jpg");
+    image::GrayImage::from_pixel(16, 16, image::Luma([90]))
+        .save(&grey)
+        .unwrap();
+    let loaded = load_image(grey).await.expect("grey JPEG");
+    assert_eq!(loaded.image.color(), image::ColorType::L8);
+
+    let colour = dir.path().join("colour.jpg");
+    image::RgbImage::from_pixel(16, 16, image::Rgb([200, 30, 30]))
+        .save(&colour)
+        .unwrap();
+    let loaded = load_image(colour).await.expect("colour JPEG");
+    assert_eq!(loaded.image.color(), image::ColorType::Rgb8);
+}
+
+#[tokio::test]
+async fn avif_without_alpha_is_read_without_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let loaded = load_image(write_avif(dir.path())).await.expect("AVIF");
+    assert_eq!(loaded.image.color(), image::ColorType::Rgb8);
+}
+
+// WMDE: a PNM whose maxval is neither 255 nor 65535 is scaled to the full range, not shown
+// almost black.
+#[tokio::test]
+async fn pnm_samples_are_scaled_by_maxval() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ten_bit.pgm");
+    let mut bytes = b"P5\n2 1\n1023\n".to_vec();
+    bytes.extend_from_slice(&1023_u16.to_be_bytes());
+    bytes.extend_from_slice(&0_u16.to_be_bytes());
+    std::fs::write(&path, bytes).unwrap();
+    let loaded = load_image(path).await.expect("10-bit PGM");
+    let image::DynamicImage::ImageLuma16(pixels) = &loaded.image else {
+        panic!("10-bit PGM read as {:?}", loaded.image.color());
+    };
+    assert_eq!(pixels.get_pixel(0, 0).0, [65535]);
+    assert_eq!(pixels.get_pixel(1, 0).0, [0]);
+}

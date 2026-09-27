@@ -62,7 +62,8 @@ use viewer_canvas::{CanvasImage, CanvasMessage, ToolKind, ViewportManager};
 use viewer_config::{AppTheme, ViewerConfig};
 use viewer_core::{
     CachedImage, ClipboardImage, ImageCache, NavState, get_image_dir, image_mime_type,
-    is_supported_image, load_image, load_thumbnail, read_details, save_image, scan_dir,
+    is_supported_image, keeps_depth, load_image, load_thumbnail, read_details, save_image,
+    scan_dir,
 };
 use viewer_toolbar::{ItemPriority, ToolbarItem, ToolbarMode, responsive_toolbar};
 use viewer_tools::{
@@ -206,7 +207,12 @@ impl CosmicViewer {
     }
 
     /// Write the edited picture to `path`. `Err` carries the toast that says why it was not.
-    fn write_edits(&mut self, path: &Path) -> Result<(), Task<Action<ViewerMessage>>> {
+    /// `in_place` is a save over the picture's own file.
+    fn write_edits(
+        &mut self,
+        path: &Path,
+        in_place: bool,
+    ) -> Result<(), Task<Action<ViewerMessage>>> {
         if let Some(current) = self.nav.current().cloned()
             && self.canvas_path.as_ref() != Some(&current)
         {
@@ -236,6 +242,18 @@ impl CosmicViewer {
                 fl!("error-save", error = fl!("error-reason-no-image")),
             ));
         };
+        // WMDE: a save over the file itself does not quietly lower its depth, as the AVIF
+        // encoder does with a 10-bit AVIF; "Save as" leaves the format to the person.
+        if in_place && !keeps_depth(&image, path) {
+            return Err(self.complain(
+                &format!("save {}", path.display()),
+                &format!(
+                    "the format keeps fewer bits than the {:?} picture",
+                    image.color()
+                ),
+                fl!("error-save", error = fl!("error-reason-depth")),
+            ));
+        }
         save_image(&image, path).map_err(|err| {
             self.complain(
                 &format!("save {}", path.display()),
@@ -298,7 +316,7 @@ impl CosmicViewer {
                 fl!("error-save", error = fl!("error-reason-no-image")),
             ));
         };
-        self.write_edits(&path)?;
+        self.write_edits(&path, true)?;
         // WMDE: the details drawer reads the file again: a re-encoded file has lost its EXIF.
         // The watcher's event may name the file otherwise (a relative path, a link's target).
         self.details_stamp = self.details_stamp.wrapping_add(1);
@@ -2397,7 +2415,7 @@ impl Application for CosmicViewer {
             ViewerMessage::SavedAs(path) => {
                 // WMDE: a failed save keeps the edits and cancels whatever was waiting on it;
                 // carrying on would drop the edits the save was meant to keep.
-                if let Err(complaint) = self.write_edits(&path) {
+                if let Err(complaint) = self.write_edits(&path, false) {
                     self.unsaved_dialog = None;
                     return complaint;
                 }

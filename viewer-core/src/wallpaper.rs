@@ -4,11 +4,10 @@
 // obvious, and both come from reading wmde-bg.
 //
 // The format. wmde-bg opens the file by its content with the `image` crate built for JPEG,
-// PNG, WebP, HDR and AVIF, plus a JPEG XL hook, and refuses a picture above 1 GiB decoded. A
-// file it cannot read gave a black desktop and no message, so anything it may not read is
-// decoded here and written as a PNG of our own. That includes AVIF, whose container rotation
-// its decoder ignores and libheif here applies, and HDR and JPEG XL, which this process cannot
-// check the way wmde-bg reads them.
+// PNG, WebP, HDR and AVIF, plus the jxl-oxide hook for JPEG XL, and refuses a picture above
+// 1 GiB decoded. A file it cannot read gave a black desktop and no message, so anything it may
+// not read is decoded here and written as a PNG of our own. That includes AVIF, whose
+// container rotation its decoder ignores and libheif here applies.
 //
 // Where to write. `same-on-all` decides whether the daemon reads the `all` entry or the
 // per-output ones. A picture for all displays is written to both, and the switch stays the
@@ -16,10 +15,13 @@
 // in an entry except the source is kept: how a background is fitted is chosen in the settings.
 
 use crate::{
-    LoadError, SaveError, details::content_format, loader::load_for_wallpaper, save_image,
+    LoadError, SaveError,
+    details::content_format,
+    loader::{load_for_wallpaper, register_jpeg_xl},
+    save_image,
 };
 use cosmic::cosmic_config::{self, ConfigGet, ConfigSet};
-use image::{DynamicImage, ImageDecoder, ImageReader};
+use image::{ImageDecoder, ImageReader};
 use std::{
     collections::HashSet,
     fs,
@@ -34,10 +36,11 @@ use std::{
 use thiserror::Error;
 use wmde_bg_config::{Config, Context, Entry, Source};
 
-/// Formats wmde-bg is given as they are, by content: the ones among the `image` features in
-/// `forks/wmde-bg/Cargo.toml` that this process decodes with the same crate (see above).
-/// The lists move together.
-const NATIVE: [&str; 3] = ["JPEG", "PNG", "WebP"];
+/// Formats wmde-bg is given as they are, by content: the `image` features in
+/// `forks/wmde-bg/Cargo.toml` and the JPEG XL hook in its `main.rs`, less AVIF (see above).
+/// This process reads them with the same decoders, so `is_native` checks what wmde-bg will
+/// meet. The lists move together.
+const NATIVE: [&str; 5] = ["JPEG", "PNG", "WebP", "HDR", "JPEG XL"];
 
 /// wmde-bg's `max_alloc` for a decoded picture, in `decode` of its `src/wallpaper.rs`.
 const DAEMON_MAX_ALLOC: u64 = 1024 * 1024 * 1024;
@@ -69,6 +72,7 @@ pub fn is_native(path: &Path) -> bool {
     if !content_format(path).is_some_and(|format| NATIVE.contains(&format)) {
         return false;
     }
+    register_jpeg_xl();
     let Ok(mut reader) = ImageReader::open(path).and_then(ImageReader::with_guessed_format) else {
         return false;
     };
@@ -179,13 +183,6 @@ fn write_png(path: &Path, dir: &Path) -> Result<PathBuf, WallpaperError> {
     }
 
     let image = load_for_wallpaper(path, WRITTEN_MAX)?;
-    // PNG holds 8 and 16 bits per channel, not floats.
-    let image = match image {
-        DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_) => {
-            DynamicImage::ImageRgba8(image.to_rgba8())
-        }
-        image => image,
-    };
     fs::create_dir_all(dir)?;
     save_image(&image, &target)?;
     Ok(target)

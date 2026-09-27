@@ -4,7 +4,7 @@
 
 use image::{DynamicImage, ImageBuffer, Rgb, Rgba, RgbaImage};
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
-use viewer_core::save_image;
+use viewer_core::{keeps_depth, save_image};
 
 const ORIGINAL: &[u8] = b"the original bytes, which a failed save must leave alone";
 
@@ -25,16 +25,16 @@ fn names(dir: &Path) -> Vec<String> {
 #[test]
 fn a_refused_encode_leaves_the_original_untouched() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("picture.gif");
+    let path = dir.path().join("picture.ico");
     fs::write(&path, ORIGINAL).unwrap();
-    // The GIF encoder refuses 16-bit pixels, and `DynamicImage::save` has truncated the file
-    // by the time it asks.
-    let image = DynamicImage::ImageRgb16(ImageBuffer::from_pixel(8, 8, Rgb([60000u16, 0, 0])));
+    // The ICO encoder refuses a side over 256 pixels, and `DynamicImage::save` has truncated
+    // the file by the time it asks.
+    let image = DynamicImage::ImageRgb16(ImageBuffer::from_pixel(300, 8, Rgb([60000u16, 0, 0])));
     assert!(save_image(&image, &path).is_err());
     assert_eq!(fs::read(&path).unwrap(), ORIGINAL);
     assert_eq!(
         names(dir.path()),
-        ["picture.gif"],
+        ["picture.ico"],
         "no temporary file is left"
     );
 }
@@ -172,4 +172,60 @@ fn a_link_to_a_file_not_yet_there_creates_the_file() {
             .is_symlink()
     );
     assert_eq!(image::open(&target).unwrap().width(), 3);
+}
+
+// WMDE: a save over the picture's own file refuses a format that would lower its depth.
+#[test]
+fn a_format_keeps_the_depth_of_a_picture_or_does_not() {
+    let deep = DynamicImage::new_rgb16(2, 2);
+    let flat = DynamicImage::new_rgb8(2, 2);
+    assert!(keeps_depth(&deep, Path::new("a.png")));
+    assert!(keeps_depth(&deep, Path::new("a.tiff")));
+    assert!(!keeps_depth(&deep, Path::new("a.avif")));
+    assert!(!keeps_depth(
+        &DynamicImage::new_luma16(2, 2),
+        Path::new("a.jpg")
+    ));
+    assert!(keeps_depth(&flat, Path::new("a.avif")));
+    assert!(keeps_depth(&flat, Path::new("a.jpg")));
+}
+
+#[test]
+fn every_encoder_that_holds_the_depth_counts_and_one_that_is_missing_is_not_blamed() {
+    let deep = DynamicImage::new_rgb16(2, 2);
+    let float = DynamicImage::new_rgb32f(2, 2);
+    assert!(keeps_depth(&deep, Path::new("a.pgm")));
+    assert!(keeps_depth(
+        &DynamicImage::new_rgba16(2, 2),
+        Path::new("a.ff")
+    ));
+    assert!(keeps_depth(&float, Path::new("a.hdr")));
+    assert!(keeps_depth(&float, Path::new("a.exr")));
+    assert!(keeps_depth(&float, Path::new("a.tiff")));
+    assert!(!keeps_depth(&float, Path::new("a.png")));
+    // No encoder: save_image refuses those with its own reason.
+    assert!(keeps_depth(&deep, Path::new("a.heic")));
+    assert!(keeps_depth(&float, Path::new("a.jxl")));
+}
+
+// WMDE: a picture reaches the encoder in a type it takes: the loader keeps grey, 16-bit and
+// float pictures as they are, and GIF, TIFF and PNG refuse some of those.
+#[test]
+fn a_picture_is_brought_to_a_type_the_encoder_takes() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let grey = dir.path().join("grey.gif");
+    save_image(&DynamicImage::new_luma8(3, 2), &grey).expect("grey as GIF");
+    assert_eq!(image::open(&grey).unwrap().width(), 3);
+
+    let grey_alpha = dir.path().join("grey_alpha.tiff");
+    save_image(&DynamicImage::new_luma_a8(3, 2), &grey_alpha).expect("grey with alpha as TIFF");
+    assert!(image::open(&grey_alpha).unwrap().color().has_alpha());
+
+    let float = dir.path().join("float.png");
+    save_image(&DynamicImage::new_rgb32f(3, 2), &float).expect("float as PNG");
+    assert_eq!(
+        image::open(&float).unwrap().color(),
+        image::ColorType::Rgb16
+    );
 }

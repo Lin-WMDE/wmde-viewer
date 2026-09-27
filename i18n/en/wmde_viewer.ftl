@@ -169,6 +169,7 @@ error-reason-read-only = the file system is read-only
 error-reason-no-space = no space left on the disk
 error-reason-unreadable = the file is damaged or its format is not supported
 error-reason-unwritable = the image cannot be written in this format
+error-reason-depth = its format would lose color depth; save it as PNG or TIFF
 error-reason-name-taken = a file with this name already exists
 error-reason-system = a system error occurred
 # WMDE: the details drawer, grouped and worded as in wmde-photos

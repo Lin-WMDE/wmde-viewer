@@ -171,6 +171,7 @@ error-reason-read-only = файлова система лише для чита�
 error-reason-no-space = на диску немає місця
 error-reason-unreadable = файл пошкоджено або його формат не підтримується
 error-reason-unwritable = зображення не можна записати в цьому форматі
+error-reason-depth = його формат втратив би глибину кольору, збережіть як PNG або TIFF
 error-reason-name-taken = файл із такою назвою вже існує
 error-reason-system = сталася системна помилка
 # WMDE: the details drawer, grouped and worded as in wmde-photos

@@ -2,7 +2,7 @@
 
 use cosmic::widget::image::Handle;
 use fast_image_resize::{PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image as FirImage};
-use image::{DynamicImage, RgbaImage, metadata::Orientation};
+use image::{DynamicImage, ImageBuffer, Pixel, RgbaImage, metadata::Orientation};
 use libheif_rs::{ColorSpace as HeifColorSpace, HeifContext, LibHeif, RgbChroma};
 use resvg::{tiny_skia, usvg};
 use std::{
@@ -12,8 +12,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use thiserror::Error;
-use turbojpeg::{Decompressor, Image, PixelFormat, ScalingFactor};
-use zune_image::codecs::bmp::zune_core::colorspace::ColorSpace;
+use turbojpeg::{Colorspace as JpegColorspace, Decompressor, Image, PixelFormat, ScalingFactor};
+use zune_image::codecs::bmp::zune_core::{bit_depth::BitDepth, colorspace::ColorSpace};
 use zune_image::image::Image as ZuneImage;
 
 // Cap texture uploads at 2048px on the long edge; the full-resolution image
@@ -194,6 +194,7 @@ pub fn load_for_wallpaper(path: &Path, max: u32) -> Result<DynamicImage, LoadErr
 // file manager under a name the viewer does not know, or under none, then opens instead of
 // failing on its name.
 fn open_by_content(path: &Path) -> Result<DynamicImage, LoadError> {
+    register_jpeg_xl();
     let reader = image::ImageReader::open(path)?.with_guessed_format()?;
     // TIFF is also the container of most camera RAW formats (NEF, DNG, ARW and others), whose
     // first image is a small preview; decoding it would pass the preview off as the photograph.
@@ -267,65 +268,152 @@ fn load_jpeg_full(path: &Path) -> Result<LoadedImage, LoadError> {
     let width = header.width;
     let height = header.height;
 
-    // Pre-allocate output buffer for RGBA (4 bytes per pixel)
-    let mut pixels = vec![0u8; 4 * width * height];
+    // WMDE: grey stays grey and colour is RGB: JPEG holds no alpha, and a picture saved again
+    // keeps the layout it was read in.
+    let grey = header.colorspace == JpegColorspace::Gray;
+    let (format, channels) = if grey {
+        (PixelFormat::GRAY, 1)
+    } else {
+        (PixelFormat::RGB, 3)
+    };
+    let mut pixels = vec![0u8; channels * width * height];
 
     let mut output = Image {
         pixels: pixels.as_mut_slice(),
         width,
-        pitch: 4 * width,
+        pitch: channels * width,
         height,
-        format: PixelFormat::RGBA,
+        format,
     };
 
     decompressor
         .decompress(&jpeg_data, output.as_deref_mut())
         .map_err(|e| LoadError::UnsupportedFormat(format!("JPEG decode error: {e}")))?;
 
-    let rgba_image = RgbaImage::from_raw(width as u32, height as u32, pixels)
-        .expect("pixel buffer matches dimensions");
-    Ok(loaded_image(path, DynamicImage::ImageRgba8(rgba_image)))
+    let (width, height) = (width as u32, height as u32);
+    let image = if grey {
+        DynamicImage::ImageLuma8(buffer(width, height, pixels)?)
+    } else {
+        DynamicImage::ImageRgb8(buffer(width, height, pixels)?)
+    };
+    Ok(loaded_image(path, image))
 }
 
+/// An image buffer over `pixels`, which a decoder produced for `width` x `height`.
+fn buffer<P: Pixel>(
+    width: u32,
+    height: u32,
+    pixels: Vec<P::Subpixel>,
+) -> Result<ImageBuffer<P, Vec<P::Subpixel>>, LoadError> {
+    ImageBuffer::from_raw(width, height, pixels).ok_or_else(|| {
+        LoadError::UnsupportedFormat("the decoded pixels do not match the size".into())
+    })
+}
+
+// WMDE: PNM and JPEG XL go to `open_by_content` instead. zune-ppm returns the samples of a
+// file whose maxval is not 255 or 65535 unscaled, so such a picture showed almost black; the
+// `image` crate scales by maxval and reads every PNM subtype. zune's JPEG XL always renders to
+// float, whatever depth the file has.
 fn is_zune_supported(extension: &str) -> bool {
     matches!(
         extension,
-        "jpg"
-            | "jpeg"
-            | "png"
-            | "ppm"
-            | "pgm"
-            | "pbm"
-            | "pnm"
-            | "bmp"
-            | "qoi"
-            | "ff"
-            | "farbfeld"
-            | "hdr"
-            | "jxl"
+        "jpg" | "jpeg" | "png" | "bmp" | "qoi" | "ff" | "farbfeld" | "hdr"
     )
+}
+
+/// WMDE: JPEG XL through jxl-oxide's decoder for the `image` crate, the one wmde-bg reads it
+/// with: the picture comes in its own depth, and `open_by_content` finds it by its signature.
+pub(crate) fn register_jpeg_xl() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        jxl_oxide::integration::register_image_decoding_hook();
+    });
 }
 
 // Image dimensions originate from a decoded image header and are far below
 // u32::MAX, so the usize -> u32 casts cannot truncate.
 #[allow(clippy::cast_possible_truncation)]
 fn load_with_zune(path: &Path) -> Result<LoadedImage, LoadError> {
-    let mut img = ZuneImage::open(path).map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
+    let img = ZuneImage::open(path).map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
+    Ok(loaded_image(path, from_zune(img)?))
+}
 
-    img.convert_color(ColorSpace::RGBA)
-        .map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
+// WMDE: the picture in its own depth and channel layout, as `open_by_content` keeps it. Every
+// zune decode used to become 8-bit RGBA, so "Save" wrote a 16-bit PNG back at 8 bits and gave
+// a grey or RGB PNG an alpha channel. Colour spaces the `image` crate has no type for become
+// RGB, or RGBA when they carry alpha; grey in float has no type there either.
+fn from_zune(mut img: ZuneImage) -> Result<DynamicImage, LoadError> {
+    let colorspace = img.colorspace();
+    let float = img.depth() == BitDepth::Float32;
+    let keep = match colorspace {
+        ColorSpace::RGB | ColorSpace::RGBA => true,
+        ColorSpace::Luma | ColorSpace::LumaA => !float,
+        _ => false,
+    };
+    if !keep {
+        let to = if colorspace.has_alpha() {
+            ColorSpace::RGBA
+        } else {
+            ColorSpace::RGB
+        };
+        img.convert_color(to)
+            .map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
+    }
+    if !matches!(
+        img.depth(),
+        BitDepth::Eight | BitDepth::Sixteen | BitDepth::Float32
+    ) {
+        img.convert_depth(BitDepth::Eight)
+            .map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
+    }
 
     let (width, height) = img.dimensions();
-
-    let pixels = img
-        .flatten_to_u8()
-        .into_iter()
-        .next()
-        .ok_or_else(|| LoadError::UnsupportedFormat("No pixel data".into()))?;
-
-    let rgba_image = RgbaImage::from_raw(width as u32, height as u32, pixels)
-        .expect("pixel buffer matches dimensions");
-    Ok(loaded_image(path, DynamicImage::ImageRgba8(rgba_image)))
+    let (width, height) = (
+        u32::try_from(width).map_err(|_| LoadError::UnsupportedFormat("too wide".into()))?,
+        u32::try_from(height).map_err(|_| LoadError::UnsupportedFormat("too tall".into()))?,
+    );
+    let colorspace = img.colorspace();
+    let no_pixels = || LoadError::UnsupportedFormat("No pixel data".into());
+    Ok(match img.depth() {
+        BitDepth::Sixteen => {
+            let pixels = img
+                .flatten_frames::<u16>()
+                .into_iter()
+                .next()
+                .ok_or_else(no_pixels)?;
+            match colorspace {
+                ColorSpace::Luma => DynamicImage::ImageLuma16(buffer(width, height, pixels)?),
+                ColorSpace::LumaA => DynamicImage::ImageLumaA16(buffer(width, height, pixels)?),
+                ColorSpace::RGB => DynamicImage::ImageRgb16(buffer(width, height, pixels)?),
+                _ => DynamicImage::ImageRgba16(buffer(width, height, pixels)?),
+            }
+        }
+        BitDepth::Float32 => {
+            let pixels = img
+                .flatten_frames::<f32>()
+                .into_iter()
+                .next()
+                .ok_or_else(no_pixels)?;
+            if colorspace == ColorSpace::RGB {
+                DynamicImage::ImageRgb32F(buffer(width, height, pixels)?)
+            } else {
+                DynamicImage::ImageRgba32F(buffer(width, height, pixels)?)
+            }
+        }
+        _ => {
+            let pixels = img
+                .flatten_frames::<u8>()
+                .into_iter()
+                .next()
+                .ok_or_else(no_pixels)?;
+            match colorspace {
+                ColorSpace::Luma => DynamicImage::ImageLuma8(buffer(width, height, pixels)?),
+                ColorSpace::LumaA => DynamicImage::ImageLumaA8(buffer(width, height, pixels)?),
+                ColorSpace::RGB => DynamicImage::ImageRgb8(buffer(width, height, pixels)?),
+                _ => DynamicImage::ImageRgba8(buffer(width, height, pixels)?),
+            }
+        }
+    })
 }
 
 fn load_with_image(path: &Path) -> Result<LoadedImage, LoadError> {
@@ -817,8 +905,18 @@ fn load_heif(path: &Path) -> Result<LoadedImage, LoadError> {
         .primary_image_handle()
         .map_err(|e| LoadError::UnsupportedFormat(format!("HEIF: {e}")))?;
 
+    // WMDE: alpha only when the file has it, and more than 8 bits (10- and 12-bit AVIF and HEIC)
+    // as 16. It was always 8-bit RGBA, so a deep picture lost its depth before any edit.
+    let alpha = handle.has_alpha_channel();
+    let deep = handle.luma_bits_per_pixel() > 8;
+    let chroma = match (deep, alpha) {
+        (false, false) => RgbChroma::Rgb,
+        (false, true) => RgbChroma::Rgba,
+        (true, false) => RgbChroma::HdrRgbLe,
+        (true, true) => RgbChroma::HdrRgbaLe,
+    };
     let img = lib
-        .decode(&handle, HeifColorSpace::Rgb(RgbChroma::Rgba), None)
+        .decode(&handle, HeifColorSpace::Rgb(chroma), None)
         .map_err(|e| LoadError::UnsupportedFormat(format!("HEIF: {e}")))?;
 
     let plane = img
@@ -838,27 +936,54 @@ fn load_heif(path: &Path) -> Result<LoadedImage, LoadError> {
         ));
     }
 
+    let channels = if alpha { 4 } else { 3 };
+    let sample_bytes = if deep { 2 } else { 1 };
     let stride = plane.stride;
-    let row_bytes = width as usize * 4;
+    let row_bytes = width as usize * channels * sample_bytes;
     if stride < row_bytes || plane.data.len() < stride * height as usize {
         return Err(LoadError::UnsupportedFormat(
             "HEIF: truncated pixel data".into(),
         ));
     }
     // Copy row-by-row: the plane stride may exceed the packed row width.
-    let mut pixels = Vec::with_capacity(row_bytes * height as usize);
+    let mut bytes = Vec::with_capacity(row_bytes * height as usize);
     for y in 0..height as usize {
         let row_start = y * stride;
-        pixels.extend_from_slice(&plane.data[row_start..row_start + row_bytes]);
+        bytes.extend_from_slice(&plane.data[row_start..row_start + row_bytes]);
     }
 
-    let handle_rgba = Handle::from_rgba(width, height, pixels.clone());
-    let rgba_image =
-        RgbaImage::from_raw(width, height, pixels).expect("pixel buffer matches dimensions");
-
+    let image = if deep {
+        // Samples of `bits` bits, stretched over the full 16-bit range.
+        let bits = u32::from(plane.bits_per_pixel.clamp(9, 16));
+        let samples = bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|sample| {
+                let value = u16::from_le_bytes(*sample);
+                if bits == 16 {
+                    value
+                } else {
+                    (value << (16 - bits)) | (value >> (2 * bits - 16))
+                }
+            })
+            .collect();
+        if alpha {
+            DynamicImage::ImageRgba16(buffer(width, height, samples)?)
+        } else {
+            DynamicImage::ImageRgb16(buffer(width, height, samples)?)
+        }
+    } else if alpha {
+        DynamicImage::ImageRgba8(buffer(width, height, bytes)?)
+    } else {
+        DynamicImage::ImageRgb8(buffer(width, height, bytes)?)
+    };
+    // The texture goes through `display_handle` like every other picture's, capped at MAX_TEX.
+    // libheif has turned the picture already; the file carries no EXIF orientation to apply.
+    let (width, height) = (image.width(), image.height());
     Ok(LoadedImage {
-        handle: handle_rgba,
-        image: DynamicImage::ImageRgba8(rgba_image),
+        handle: display_handle(&image),
+        image,
         width,
         height,
         path: path.to_path_buf(),

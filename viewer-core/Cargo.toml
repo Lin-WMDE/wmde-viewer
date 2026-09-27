@@ -26,6 +26,9 @@ tempfile = "3.27.0"
 # [patch] cannot rename a crate.
 dirs = "6.0.0"
 wmde-bg-config = { path = "../../wmde-bg/config" }
+# WMDE: JPEG XL in its own depth through the `image` crate, as wmde-bg reads it; already in the
+# graph through zune-image.
+jxl-oxide = { version = "0.12.6", features = ["image"] }
 turbojpeg.workspace = true
 zune-image.workspace = true
 
