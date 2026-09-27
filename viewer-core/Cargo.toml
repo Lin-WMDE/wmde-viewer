@@ -19,6 +19,8 @@ libheif-rs.workspace = true
 lru.workspace = true
 rayon.workspace = true
 resvg.workspace = true
+# WMDE: the temporary file behind save_image; already in the graph through other crates.
+tempfile = "3.27.0"
 turbojpeg.workspace = true
 zune-image.workspace = true
 
