@@ -140,7 +140,7 @@ fn load_image_sync(path: &Path) -> Result<LoadedImage, LoadError> {
     if extension == "svg" {
         return load_svg_at(path, MAX_TEX);
     }
-    if matches!(extension.as_str(), "heif" | "heic") {
+    if is_heif_container(path)? {
         return load_heif(path);
     }
 
@@ -162,8 +162,56 @@ fn load_image_sync(path: &Path) -> Result<LoadedImage, LoadError> {
     }
 
     // Standard image formats via the 'image' crate
-    let img = image::open(path)?;
+    let img = open_by_content(path)?;
     Ok(loaded_image(path, img))
+}
+
+// WMDE: the content picks the decoder, the extension only breaks a tie. A file opened from the
+// file manager under a name the viewer does not know, or under none, then opens instead of
+// failing on its name.
+fn open_by_content(path: &Path) -> Result<DynamicImage, LoadError> {
+    let reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    // TIFF is also the container of most camera RAW formats (NEF, DNG, ARW and others), whose
+    // first image is a small preview; decoding it would pass the preview off as the photograph.
+    let named_tiff = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_none_or(|ext| ext.eq_ignore_ascii_case("tif") || ext.eq_ignore_ascii_case("tiff"));
+    if reader.format() == Some(image::ImageFormat::Tiff) && !named_tiff {
+        return Err(LoadError::UnsupportedFormat(
+            "TIFF content under another name, likely a camera RAW".into(),
+        ));
+    }
+    Ok(reader.decode()?)
+}
+
+// WMDE: HEIF and AVIF are told by their `ftyp` box, not by the name, so an AVIF served behind a
+// `.jpg` link or a HEIC saved without an extension still reaches libheif, and a JPEG named
+// `.heic` does not. AVIF goes to libheif at all because the `image` crate's `avif` feature is
+// the ravif encoder and decodes nothing; libheif reads AVIF with its irot/imir transforms and
+// grids.
+fn is_heif_container(path: &Path) -> Result<bool, LoadError> {
+    const BRANDS: [&[u8]; 13] = [
+        b"avif", b"avis", b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"hevm", b"hevs",
+        b"mif1", b"mif2", b"msf1",
+    ];
+    let mut head = Vec::with_capacity(64);
+    File::open(path)?.take(64).read_to_end(&mut head)?;
+    if head.len() < 12 || &head[4..8] != b"ftyp" {
+        return Ok(false);
+    }
+    // Box size, then `ftyp`, the major brand, a minor version and the compatible brands.
+    let size = u32::from_be_bytes([head[0], head[1], head[2], head[3]]) as usize;
+    let compatible = head.get(16..size.min(head.len())).unwrap_or_default();
+    Ok(std::iter::once(&head[8..12])
+        .chain(
+            compatible
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(<[u8; 4]>::as_slice),
+        )
+        .any(|brand| BRANDS.contains(&brand)))
 }
 
 /// Load full JPEG using turbojpeg (faster than zune/image crate)
@@ -247,7 +295,7 @@ fn load_with_zune(path: &Path) -> Result<LoadedImage, LoadError> {
 }
 
 fn load_with_image(path: &Path) -> Result<LoadedImage, LoadError> {
-    let img = image::open(path)?;
+    let img = open_by_content(path)?;
     Ok(loaded_image(path, img))
 }
 
@@ -279,7 +327,7 @@ fn load_thumbnail_sync(path: &Path, max_size: u32) -> Result<LoadedImage, LoadEr
     if extension == "svg" {
         return load_svg_at(path, max_size);
     }
-    if matches!(extension.as_str(), "heif" | "heic") {
+    if is_heif_container(path)? {
         let loaded = load_heif(path)?;
         if loaded.width <= max_size && loaded.height <= max_size {
             return Ok(loaded);
@@ -593,7 +641,7 @@ fn decode_and_resize_zune(path: &Path, max_size: u32) -> Result<(u32, u32, Vec<u
 
 /// Decode and resize using image crate, returns (width, height, `rgba_pixels`)
 fn decode_and_resize_image(path: &Path, max_size: u32) -> Result<(u32, u32, Vec<u8>), LoadError> {
-    let img = image::open(path)?;
+    let img = open_by_content(path)?;
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
 

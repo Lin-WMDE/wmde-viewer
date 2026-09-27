@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::path::PathBuf;
+use image::ImageEncoder;
+use std::path::{Path, PathBuf};
 use viewer_core::{load_image, load_thumbnail};
 
 fn test_images_dir() -> PathBuf {
@@ -200,4 +201,112 @@ async fn embedded_exif_thumbnail_is_turned() {
     assert_upright(&thumb, 16, 32, GREEN, YELLOW);
     let full = load_image(path).await.expect("full");
     assert_upright(&full, 128, 256, RED, BLUE);
+}
+
+// WMDE: AVIF is read by libheif. The `image` crate here carries only the AVIF encoder, which
+// is what makes the fixture: red over blue, 32 by 64, no transform.
+fn write_avif(dir: &Path) -> PathBuf {
+    let mut img = image::RgbImage::from_pixel(32, 64, image::Rgb(BLUE));
+    for y in 0..32 {
+        for x in 0..32 {
+            img.put_pixel(x, y, image::Rgb(RED));
+        }
+    }
+    let path = dir.join("red_over_blue.avif");
+    let file = std::fs::File::create(&path).unwrap();
+    image::codecs::avif::AvifEncoder::new_with_speed_quality(file, 10, 100)
+        .write_image(img.as_raw(), 32, 64, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    path
+}
+
+#[tokio::test]
+async fn avif_is_decoded() {
+    let dir = tempfile::tempdir().unwrap();
+    let loaded = load_image(write_avif(dir.path()))
+        .await
+        .expect("AVIF should decode");
+    assert_upright(&loaded, 32, 64, RED, BLUE);
+}
+
+#[tokio::test]
+async fn avif_thumbnail_is_scaled() {
+    let dir = tempfile::tempdir().unwrap();
+    let thumb = load_thumbnail(write_avif(dir.path()), 32)
+        .await
+        .expect("AVIF thumbnail");
+    assert_upright(&thumb, 16, 32, RED, BLUE);
+}
+
+// WMDE: a file handed over under a name no decoder knows is decoded by its content.
+#[tokio::test]
+async fn an_unknown_extension_opens_by_its_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("photo.download");
+    std::fs::copy(test_images_dir().join("orientation_6.jpg"), &path).unwrap();
+    let loaded = load_image(path.clone())
+        .await
+        .expect("JPEG under .download");
+    assert_upright(&loaded, 32, 64, RED, BLUE);
+    let thumb = load_thumbnail(path, 32).await.expect("its thumbnail");
+    assert_upright(&thumb, 16, 32, RED, BLUE);
+}
+
+#[tokio::test]
+async fn a_name_without_an_extension_opens_by_its_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("screenshot");
+    std::fs::copy(test_images_dir().join("orientation_6.png"), &path).unwrap();
+    let loaded = load_image(path.clone())
+        .await
+        .expect("PNG without an extension");
+    assert_upright(&loaded, 32, 64, RED, BLUE);
+    let thumb = load_thumbnail(path, 32).await.expect("its thumbnail");
+    assert_upright(&thumb, 16, 32, RED, BLUE);
+}
+
+// WMDE: HEIF and AVIF are recognised by their container, whatever the name.
+#[tokio::test]
+async fn avif_under_another_name_or_none_is_decoded() {
+    let dir = tempfile::tempdir().unwrap();
+    let avif = write_avif(dir.path());
+    for name in ["served_as.jpg", "no_extension"] {
+        let path = dir.path().join(name);
+        std::fs::copy(&avif, &path).unwrap();
+        let loaded = load_image(path.clone()).await.expect(name);
+        assert_upright(&loaded, 32, 64, RED, BLUE);
+        let thumb = load_thumbnail(path, 32).await.expect(name);
+        assert_upright(&thumb, 16, 32, RED, BLUE);
+    }
+}
+
+#[tokio::test]
+async fn a_jpeg_named_avif_opens_as_a_jpeg() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("not_really.avif");
+    std::fs::copy(test_images_dir().join("orientation_6.jpg"), &path).unwrap();
+    let loaded = load_image(path).await.expect("JPEG under .avif");
+    assert_upright(&loaded, 32, 64, RED, BLUE);
+}
+
+// WMDE: TIFF is the container of most camera RAW formats, and their first image is a small
+// preview; under a RAW name it is refused rather than shown as the photograph.
+#[tokio::test]
+async fn tiff_content_under_a_raw_name_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let tiff = dir.path().join("scan.tiff");
+    image::RgbImage::from_pixel(8, 6, image::Rgb(RED))
+        .save(&tiff)
+        .unwrap();
+    let raw = dir.path().join("DSC_0001.nef");
+    std::fs::copy(&tiff, &raw).unwrap();
+    assert!(load_image(raw.clone()).await.is_err());
+    assert!(load_thumbnail(raw, 32).await.is_err());
+
+    let bare = dir.path().join("scan");
+    std::fs::copy(&tiff, &bare).unwrap();
+    assert_eq!(
+        load_image(bare).await.expect("TIFF without a name").width,
+        8
+    );
 }
