@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::{
-    failure, fl, icon_cache_get,
+    details, failure, fl, icon_cache_get,
     key_binds::{self, MenuAction, keyboard_shortcut_handler},
     menu::menu_bar,
     message::{
@@ -62,7 +62,7 @@ use viewer_canvas::{CanvasImage, CanvasMessage, ToolKind, ViewportManager};
 use viewer_config::{AppTheme, ViewerConfig};
 use viewer_core::{
     CachedImage, ClipboardImage, ImageCache, NavState, get_image_dir, image_mime_type,
-    is_supported_image, load_image, load_thumbnail, read_dpi, save_image, scan_dir,
+    is_supported_image, load_image, load_thumbnail, read_details, save_image, scan_dir,
 };
 use viewer_toolbar::{ItemPriority, ToolbarItem, ToolbarMode, responsive_toolbar};
 use viewer_tools::{
@@ -150,6 +150,12 @@ pub struct CosmicViewer {
     /// WMDE: the file whose picture the canvas holds. While the next picture loads the canvas
     /// keeps the previous one, and a save must not write it over the file now selected.
     canvas_path: Option<PathBuf>,
+    /// WMDE: what the file of the described picture says about itself, for the details
+    /// drawer. Read while the drawer is open, dropped when it closes.
+    details: Option<(PathBuf, Box<viewer_core::Details>)>,
+    /// WMDE: moved on by every change to the current picture's file, so the drawer reads the
+    /// file again.
+    details_stamp: u64,
     about: About,
 }
 
@@ -290,6 +296,9 @@ impl CosmicViewer {
             ));
         };
         self.write_edits(&path)?;
+        // WMDE: the details drawer reads the file again: a re-encoded file has lost its EXIF.
+        // The watcher's event may name the file otherwise (a relative path, a link's target).
+        self.details_stamp = self.details_stamp.wrapping_add(1);
         self.viewport.revert_all();
         self.cache.remove_full(&path);
         self.viewport.cancel_tool();
@@ -521,68 +530,169 @@ impl CosmicViewer {
             return content.push(text::body(fl!("no-image-loaded"))).into();
         };
 
-        // File name
-        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-            content = content.push(text::heading(name));
-        }
-
-        // Type
-        if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
-            content = content.push(detail_row(fl!("image-type"), friendly_type_name(ext)));
-        }
-
-        // File metadata (size, timestamps)
-        if let Ok(meta) = std::fs::metadata(path) {
-            content = content.push(detail_row(
-                fl!("image-file-size"),
-                format_file_size(meta.len()),
-            ));
-
-            if let Ok(created) = meta.created() {
-                content = content.push(detail_row(
-                    fl!("image-created"),
-                    format_system_time(created),
-                ));
-            }
-
-            if let Ok(modified) = meta.modified() {
-                content = content.push(detail_row(
-                    fl!("image-modified"),
-                    format_system_time(modified),
-                ));
-            }
-
-            if let Ok(accessed) = meta.accessed() {
-                content = content.push(detail_row(
-                    fl!("image-accessed"),
-                    format_system_time(accessed),
-                ));
-            }
-        }
-
-        // Image dimensions
-        if let Some(cached) = self.cache.get_full(path) {
-            content = content.push(detail_row(
-                fl!("image-size"),
-                format!("{} x {}", cached.width, cached.height),
-            ));
-        }
-
-        // DPI (JPEG/TIFF only)
-        if let Some(dpi) = read_dpi(path) {
-            content = content.push(detail_row(
-                fl!("image-dpi"),
-                fl!("image-dpi-value", dpi = dpi),
-            ));
-        }
-
-        // Folder name
-        if let Some(name) = path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str())
+        // WMDE: the rows of wmde-photos' details panel in its groups, with the dates and the
+        // folder upstream shows as well. What has to be read from the file arrives with
+        // `DetailsRead`; until then only what needs no reading is shown. A row without a value
+        // is left out, and so is a group left with no rows.
+        let details = self
+            .details
+            .as_ref()
+            .filter(|(read, _)| read == path)
+            .map(|(_, details)| details.as_ref());
+        let photo = details.and_then(|details| details.exif.as_ref());
+        // An SVG is rendered at the texture size; its size is the one the drawing declares.
+        let size = if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
         {
-            content = content.push(detail_row(fl!("image-folder"), name.to_string()));
+            details.and_then(|d| d.drawing_size)
+        } else {
+            self.cache.full_size(path)
+        };
+        let name = |name: &std::ffi::OsStr| name.to_string_lossy().into_owned();
+
+        let groups = [
+            (
+                fl!("image-group-file"),
+                vec![
+                    (fl!("image-name"), path.file_name().map(name)),
+                    (
+                        fl!("image-file-size"),
+                        details.and_then(|d| d.size).map(format_file_size),
+                    ),
+                    (
+                        fl!("image-folder"),
+                        path.parent().and_then(Path::file_name).map(name),
+                    ),
+                    (
+                        fl!("image-created"),
+                        details.and_then(|d| d.created).map(format_system_time),
+                    ),
+                    (
+                        fl!("image-modified"),
+                        details.and_then(|d| d.modified).map(format_system_time),
+                    ),
+                    (
+                        fl!("image-accessed"),
+                        details.and_then(|d| d.accessed).map(format_system_time),
+                    ),
+                ],
+            ),
+            (
+                fl!("image-group-picture"),
+                vec![
+                    (fl!("image-size"), size.map(|(w, h)| format!("{w} x {h}"))),
+                    (
+                        fl!("image-megapixels"),
+                        size.map(|(w, h)| details::megapixels(w, h)),
+                    ),
+                    // The content's format; the name's only when the content is not recognised.
+                    (
+                        fl!("image-type"),
+                        details.map(|d| {
+                            d.format.map_or_else(
+                                || {
+                                    friendly_type_name(
+                                        path.extension()
+                                            .and_then(|ext| ext.to_str())
+                                            .unwrap_or_default(),
+                                    )
+                                },
+                                |format| fl!("image-type-format", format = format),
+                            )
+                        }),
+                    ),
+                    (
+                        fl!("image-dpi"),
+                        details
+                            .and_then(|d| d.dpi)
+                            .map(|dpi| fl!("image-dpi-value", dpi = dpi)),
+                    ),
+                ],
+            ),
+            (
+                fl!("image-group-shot"),
+                vec![
+                    (
+                        fl!("image-taken"),
+                        photo.and_then(|p| p.taken.as_ref()).map(details::taken),
+                    ),
+                    (fl!("image-camera"), photo.and_then(|p| p.camera.clone())),
+                    (fl!("image-lens"), photo.and_then(|p| p.lens.clone())),
+                    (
+                        fl!("image-exposure"),
+                        photo.and_then(|p| p.exposure).map(details::exposure),
+                    ),
+                    (
+                        fl!("image-aperture"),
+                        photo.and_then(|p| p.aperture).map(details::aperture),
+                    ),
+                    (
+                        fl!("image-iso"),
+                        photo.and_then(|p| p.iso).map(|iso| iso.to_string()),
+                    ),
+                    (
+                        fl!("image-focal-length"),
+                        photo
+                            .and_then(|p| p.focal_length)
+                            .map(details::focal_length),
+                    ),
+                    (
+                        fl!("image-flash"),
+                        photo.and_then(|p| p.flash).map(details::flash),
+                    ),
+                ],
+            ),
+            (
+                fl!("image-group-place"),
+                vec![
+                    (
+                        fl!("image-latitude"),
+                        photo.and_then(|p| p.latitude).map(details::latitude),
+                    ),
+                    (
+                        fl!("image-longitude"),
+                        photo.and_then(|p| p.longitude).map(details::longitude),
+                    ),
+                ],
+            ),
+            (
+                fl!("image-group-other"),
+                vec![
+                    (
+                        fl!("image-software"),
+                        photo.and_then(|p| p.software.clone()),
+                    ),
+                    (fl!("image-author"), photo.and_then(|p| p.author.clone())),
+                    (
+                        fl!("image-description"),
+                        photo.and_then(|p| p.description.clone()),
+                    ),
+                    (
+                        fl!("image-copyright"),
+                        photo.and_then(|p| p.copyright.clone()),
+                    ),
+                ],
+            ),
+        ];
+
+        for (title, rows) in groups {
+            let rows: Vec<_> = rows
+                .into_iter()
+                .filter_map(|(label, value)| value.map(|value| detail_row(label, value)))
+                .collect();
+            if rows.is_empty() {
+                continue;
+            }
+            let group = Column::new()
+                .spacing(spacing.space_xs)
+                .push(text::heading(title))
+                .extend(rows);
+            content = content.push(group);
+        }
+
+        if details.is_some_and(|d| d.exif.is_none()) {
+            content = content.push(text::caption(fl!("image-no-exif")));
         }
 
         content.into()
@@ -1643,6 +1753,8 @@ impl Application for CosmicViewer {
             toasts: Toasts::new(ViewerMessage::CloseToast),
             load_error: None,
             canvas_path: None,
+            details: None,
+            details_stamp: 0,
             about: About::default()
                 .name(fl!("app-name"))
                 .icon(icon::from_name(Self::APP_ID))
@@ -2249,6 +2361,10 @@ impl Application for CosmicViewer {
                     self.unsaved_dialog = None;
                     return complaint;
                 }
+                // WMDE: see save_in_place.
+                if self.nav.current() == Some(&path) {
+                    self.details_stamp = self.details_stamp.wrapping_add(1);
+                }
 
                 self.viewport.cancel_tool();
                 self.viewport.revert_all();
@@ -2297,6 +2413,12 @@ impl Application for CosmicViewer {
                 }
             }
             ViewerMessage::WatcherEvent(evt) => {
+                // WMDE: the details drawer reads a changed file again.
+                if let WatcherEvent::Created(path) | WatcherEvent::Modified(path) = &evt
+                    && self.nav.current() == Some(path)
+                {
+                    self.details_stamp = self.details_stamp.wrapping_add(1);
+                }
                 match &evt {
                     WatcherEvent::Modified(path) if path.exists() => {
                         // WMDE: a load already under way read the file before this change;
@@ -2401,16 +2523,20 @@ impl Application for CosmicViewer {
             }
             ViewerMessage::MoveToTrash => {
                 self.context_menu_position = None;
+                // WMDE: unsaved edits are settled before the file goes, not after: Cancel keeps
+                // the file, and Discard replays the deletion against the album as it is then.
+                if self.nav.current().is_some() && self.guard_unsaved(ViewerMessage::MoveToTrash) {
+                    return Task::none();
+                }
                 if let Some(path) = self.nav.current().cloned() {
-                    let next_idx = self.nav.index().and_then(|idx| {
-                        if idx > 0 {
-                            Some(idx - 1)
-                        } else if self.nav.total() > 1 {
-                            Some(1)
-                        } else {
-                            None
-                        }
-                    });
+                    // WMDE: the picture leaves the album at once and the one after it takes its
+                    // place, the one before only when the last is deleted, as in wmde-photos:
+                    // throwing out the bad shots of a series moves forward, not back to one
+                    // already seen. Waiting for the rescan after the trash left the file in the
+                    // album for 200 ms, and a second Delete in that window picked it again.
+                    self.nav.forget_current();
+                    let next_idx = self.nav.index();
+                    self.rebuild_nav_handles();
                     if let Some(idx) = next_idx {
                         tasks.push(self.update(ViewerMessage::Nav(NavMessage::GridActivate(idx))));
                     } else {
@@ -2512,14 +2638,28 @@ impl Application for CosmicViewer {
                             .duration(toaster::Duration::Long);
                         tasks.push(self.toasts.push(toast).map(Action::App));
                     }
-                    Err((reason, detail)) => tasks.push(self.complain(
-                        &format!("move {} to the trash", path.display()),
-                        &detail,
-                        fl!("error-trash", file = file_name.as_str(), error = reason),
-                    )),
+                    Err((reason, detail)) => {
+                        // WMDE: the file stayed; a rescan puts it back into the album.
+                        tasks.push(self.reload_image_list());
+                        tasks.push(self.complain(
+                            &format!("move {} to the trash", path.display()),
+                            &detail,
+                            fl!("error-trash", file = file_name.as_str(), error = reason),
+                        ));
+                    }
                 }
             }
             ViewerMessage::ShowError(message) => tasks.push(self.show_error(message)),
+            ViewerMessage::DetailsRead(path, stamp, details) => {
+                // A reading of a picture since left, or of the file before its latest change,
+                // is dropped.
+                if self.context_page == Some(ContextMessage::ImageDetails)
+                    && stamp == self.details_stamp
+                    && self.nav.current() == Some(&path)
+                {
+                    self.details = Some((path, details));
+                }
+            }
             ViewerMessage::CloseToast(toast_id) => {
                 self.toasts.remove(toast_id);
             }
@@ -3131,6 +3271,10 @@ impl Application for CosmicViewer {
                     self.context_page = None;
                 } else {
                     self.context_page = Some(page);
+                }
+                // WMDE: read afresh on the next opening.
+                if self.context_page != Some(ContextMessage::ImageDetails) {
+                    self.details = None;
                 }
 
                 self.set_show_context(self.context_page.is_some());
@@ -4345,6 +4489,27 @@ impl Application for CosmicViewer {
             crate::watcher::watch_directory(self.nav.dir().map(std::path::Path::to_path_buf))
                 .map(ViewerMessage::WatcherEvent);
 
+        // WMDE: the details drawer reads the file it describes off the drawing thread, once for
+        // each picture and again whenever the file changes. A plain thread, as for
+        // OpenContaining: a read stuck on a dead network mount must not hold the exit.
+        let details_sub = match (self.context_page, self.nav.current()) {
+            (Some(ContextMessage::ImageDetails), Some(path)) => {
+                Subscription::run_with((path.clone(), self.details_stamp), |(path, stamp)| {
+                    let (path, stamp) = (path.clone(), *stamp);
+                    cosmic::iced::futures::stream::once(async move {
+                        let (sender, receiver) = tokio::sync::oneshot::channel();
+                        let file = path.clone();
+                        std::thread::spawn(move || {
+                            _ = sender.send(read_details(&file));
+                        });
+                        let details = receiver.await.unwrap_or_default();
+                        ViewerMessage::DetailsRead(path, stamp, Box::new(details))
+                    })
+                })
+            }
+            _ => Subscription::none(),
+        };
+
         Subscription::batch([
             event::listen_with(|event, _status, _id| match event {
                 iced::Event::Window(iced::window::Event::Resized(size)) => {
@@ -4362,6 +4527,7 @@ impl Application for CosmicViewer {
                 _ => None,
             }),
             watcher_sub,
+            details_sub,
         ])
     }
 }

@@ -173,3 +173,45 @@ error-reason-unreadable = файл пошкоджено або його форм
 error-reason-unwritable = зображення не можна записати в цьому форматі
 error-reason-name-taken = файл із такою назвою вже існує
 error-reason-system = сталася системна помилка
+# WMDE: the details drawer, grouped and worded as in wmde-photos
+image-group-file = Файл
+image-group-picture = Зображення
+image-group-shot = Знімок
+image-group-place = Місце
+image-group-other = Інше
+image-name = Назва:
+image-megapixels = Мегапікселів:
+image-taken = Знято:
+image-camera = Камера:
+image-lens = Обʼєктив:
+image-exposure = Витримка:
+image-exposure-value = { $time } с
+image-aperture = Діафрагма:
+image-iso = ISO:
+image-focal-length = Фокусна відстань:
+image-focal-length-value = { $mm } мм
+image-flash = Спалах:
+image-flash-fired = Спрацював
+image-flash-not-fired = Не спрацював
+image-flash-absent = Немає
+image-flash-forced = примусово
+image-flash-suppressed = вимкнено
+image-flash-auto = авто
+image-flash-red-eye = усунення червоних очей
+image-latitude = Широта:
+image-latitude-value = { $degrees }° { $hemisphere ->
+    [north] пн. ш.
+   *[south] пд. ш.
+}
+image-longitude = Довгота:
+image-longitude-value = { $degrees }° { $hemisphere ->
+    [east] сх. д.
+   *[west] зх. д.
+}
+image-software = Програма:
+image-author = Автор:
+image-description = Опис:
+image-copyright = Права:
+image-no-exif = Знімок не містить даних EXIF
+# chrono strftime pattern for the camera's clock, which records no time zone
+date-time-format-camera = %d.%m.%Y %H:%M:%S

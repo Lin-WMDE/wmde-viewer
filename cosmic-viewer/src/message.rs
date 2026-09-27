@@ -74,6 +74,9 @@ pub enum ViewerMessage {
     TrashResult(PathBuf, Result<(), (String, String)>),
     // WMDE: a failure already written to the journal, to be shown as a toast.
     ShowError(String),
+    // WMDE: what the file says about itself, for the details drawer, read at a given
+    // `details_stamp`.
+    DetailsRead(PathBuf, u64, Box<viewer_core::Details>),
     Cancelled,
     Quit,
     CloseRequested,

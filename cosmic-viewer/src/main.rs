@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 pub mod app;
+pub mod details;
 pub mod failure;
 pub mod icon_cache;
 pub mod key_binds;

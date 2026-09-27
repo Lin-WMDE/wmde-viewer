@@ -171,3 +171,45 @@ error-reason-unreadable = the file is damaged or its format is not supported
 error-reason-unwritable = the image cannot be written in this format
 error-reason-name-taken = a file with this name already exists
 error-reason-system = a system error occurred
+# WMDE: the details drawer, grouped and worded as in wmde-photos
+image-group-file = File
+image-group-picture = Image
+image-group-shot = Photograph
+image-group-place = Place
+image-group-other = Other
+image-name = Name:
+image-megapixels = Megapixels:
+image-taken = Taken:
+image-camera = Camera:
+image-lens = Lens:
+image-exposure = Exposure:
+image-exposure-value = { $time } s
+image-aperture = Aperture:
+image-iso = ISO:
+image-focal-length = Focal length:
+image-focal-length-value = { $mm } mm
+image-flash = Flash:
+image-flash-fired = Fired
+image-flash-not-fired = Did not fire
+image-flash-absent = None
+image-flash-forced = forced
+image-flash-suppressed = off
+image-flash-auto = auto
+image-flash-red-eye = red-eye reduction
+image-latitude = Latitude:
+image-latitude-value = { $degrees }° { $hemisphere ->
+    [north] N
+   *[south] S
+}
+image-longitude = Longitude:
+image-longitude-value = { $degrees }° { $hemisphere ->
+    [east] E
+   *[west] W
+}
+image-software = Software:
+image-author = Author:
+image-description = Description:
+image-copyright = Copyright:
+image-no-exif = This picture carries no EXIF data
+# chrono strftime pattern for the camera's clock, which records no time zone
+date-time-format-camera = %a %d %b %Y %I:%M:%S %p

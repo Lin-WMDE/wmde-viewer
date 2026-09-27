@@ -191,27 +191,37 @@ fn open_by_content(path: &Path) -> Result<DynamicImage, LoadError> {
 // the ravif encoder and decodes nothing; libheif reads AVIF with its irot/imir transforms and
 // grids.
 fn is_heif_container(path: &Path) -> Result<bool, LoadError> {
-    const BRANDS: [&[u8]; 13] = [
-        b"avif", b"avis", b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"hevm", b"hevs",
-        b"mif1", b"mif2", b"msf1",
-    ];
     let mut head = Vec::with_capacity(64);
     File::open(path)?.take(64).read_to_end(&mut head)?;
-    if head.len() < 12 || &head[4..8] != b"ftyp" {
-        return Ok(false);
-    }
+    Ok(ftyp_brands(&head).any(|brand| HEIF_BRANDS.contains(&brand)))
+}
+
+/// The `ftyp` brands libheif reads.
+pub(crate) const HEIF_BRANDS: [&[u8]; 13] = [
+    b"avif", b"avis", b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"hevm", b"hevs",
+    b"mif1", b"mif2", b"msf1",
+];
+
+/// The brands of the ISO BMFF `ftyp` box that opens `head`, the major brand first. None for
+/// anything that does not open with one.
+pub(crate) fn ftyp_brands(head: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let is_ftyp = head.len() >= 12 && &head[4..8] == b"ftyp";
     // Box size, then `ftyp`, the major brand, a minor version and the compatible brands.
-    let size = u32::from_be_bytes([head[0], head[1], head[2], head[3]]) as usize;
-    let compatible = head.get(16..size.min(head.len())).unwrap_or_default();
-    Ok(std::iter::once(&head[8..12])
-        .chain(
-            compatible
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(<[u8; 4]>::as_slice),
-        )
-        .any(|brand| BRANDS.contains(&brand)))
+    let size = head
+        .first_chunk::<4>()
+        .map_or(0, |size| u32::from_be_bytes(*size) as usize);
+    let major = head.get(8..12).filter(|_| is_ftyp);
+    let compatible = head
+        .get(16..size.min(head.len()))
+        .filter(|_| is_ftyp)
+        .unwrap_or_default();
+    major.into_iter().chain(
+        compatible
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(<[u8; 4]>::as_slice),
+    )
 }
 
 /// Load full JPEG using turbojpeg (faster than zune/image crate)
@@ -832,13 +842,18 @@ fn load_heif(path: &Path) -> Result<LoadedImage, LoadError> {
 }
 
 /// Read DPI from EXIF data (JPEG/TIFF only)
-// The DPI value is rounded and clamped into [0, u32::MAX] before the cast, so
-// it cannot truncate or lose a sign.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 #[must_use]
 pub fn read_dpi(path: &Path) -> Option<u32> {
     let mut file = BufReader::new(File::open(path).ok()?);
     let exif = exif::Reader::new().read_from_container(&mut file).ok()?;
+    exif_dpi(&exif)
+}
+
+// WMDE: split from `read_dpi` for the details drawer, which has the EXIF read already.
+// The DPI value is rounded and clamped into [0, u32::MAX] before the cast, so
+// it cannot truncate or lose a sign.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub(crate) fn exif_dpi(exif: &exif::Exif) -> Option<u32> {
     let x_res = exif.get_field(exif::Tag::XResolution, exif::In::PRIMARY)?;
 
     match x_res.value {

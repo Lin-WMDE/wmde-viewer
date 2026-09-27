@@ -77,6 +77,17 @@ impl ImageCache {
             .is_ok_and(|cache| cache.contains(path))
     }
 
+    /// WMDE: the size of the cached full picture, turned as shown, without cloning it as
+    /// `get_full` does and without making it the most recently used.
+    #[must_use]
+    pub fn full_size(&self, path: &PathBuf) -> Option<(u32, u32)> {
+        self.full_images
+            .lock()
+            .ok()?
+            .peek(path)
+            .map(|image| (image.width, image.height))
+    }
+
     pub fn insert_full(&self, path: PathBuf, image: CachedImage) {
         self.clear_pending(&path);
         if let Ok(mut cache) = self.full_images.lock() {

@@ -89,6 +89,20 @@ impl NavState {
         self.cur_idx = None;
     }
 
+    /// WMDE: take the current picture out of the album, as the next directory scan would once
+    /// its file is gone. The picture after it takes its place, the one before when it was the
+    /// last; an album left empty has nothing selected. Returns the new selection.
+    pub fn forget_current(&mut self) -> Option<&PathBuf> {
+        let idx = self.cur_idx.filter(|&idx| idx < self.images.len())?;
+        self.images.remove(idx);
+        self.cur_idx = if idx < self.images.len() {
+            Some(idx)
+        } else {
+            idx.checked_sub(1)
+        };
+        self.current()
+    }
+
     pub fn go_next(&mut self) -> Option<&PathBuf> {
         if self.images.is_empty() {
             return None;

@@ -218,3 +218,29 @@ fn a_file_the_scan_left_out_is_shown_on_its_own() {
     assert_eq!(nav.images(), listed.as_slice());
     assert_eq!(nav.index(), None);
 }
+
+#[test]
+fn a_deleted_picture_leaves_the_album_and_the_next_one_takes_its_place() {
+    let dir = PathBuf::from("/pictures");
+    let listed: Vec<PathBuf> = ["a.jpg", "b.jpg", "c.jpg"]
+        .iter()
+        .map(|name| dir.join(name))
+        .collect();
+    let mut nav = NavState::new();
+    nav.set_images(dir, listed.clone(), Some(&listed[0]));
+
+    assert_eq!(nav.forget_current(), Some(&listed[1]));
+    assert_eq!(nav.index(), Some(0));
+    assert_eq!(nav.images(), &listed[1..]);
+
+    // The last picture gives way to the one before it.
+    nav.select(1);
+    assert_eq!(nav.forget_current(), Some(&listed[1]));
+    assert_eq!(nav.images(), std::slice::from_ref(&listed[1]));
+
+    // The only picture leaves an empty album with nothing selected.
+    assert_eq!(nav.forget_current(), None);
+    assert!(nav.is_empty());
+    assert_eq!(nav.index(), None);
+    assert_eq!(nav.forget_current(), None);
+}
