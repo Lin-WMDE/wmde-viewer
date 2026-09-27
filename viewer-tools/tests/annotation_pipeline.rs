@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use cosmic::iced::{Color, Point, Rectangle, Size};
-use image::DynamicImage;
+use image::{DynamicImage, GenericImageView};
 use viewer_tools::ToolOperation;
 use viewer_tools::annotate::{
     HighlighterOperation, PenOperation, PencilOperation, ShapeKind, ShapeOperation,
@@ -288,4 +288,69 @@ fn shape_star_modifies_image() {
     op.apply(&mut img);
 
     assert_ne!(pixel_sum(&img), before);
+}
+
+// WMDE: the loader keeps most formats in their own pixel type (an RGB WebP, a grey or 16-bit
+// TIFF). Annotating one used to panic; it must neither panic nor cost the picture its depth
+// or add an alpha channel it never had.
+#[test]
+fn annotations_keep_the_depth_and_layout_of_the_picture() {
+    let deep = image::Rgb([1000u16, 30000, 65000]);
+    let cases = [
+        (DynamicImage::new_rgb8(64, 64), image::ColorType::Rgb8),
+        (DynamicImage::new_luma8(64, 64), image::ColorType::Rgb8),
+        (DynamicImage::new_luma_a8(64, 64), image::ColorType::Rgba8),
+        (
+            DynamicImage::ImageRgb16(image::ImageBuffer::from_pixel(64, 64, deep)),
+            image::ColorType::Rgb16,
+        ),
+        (DynamicImage::new_luma16(64, 64), image::ColorType::Rgb16),
+        (DynamicImage::new_rgb32f(64, 64), image::ColorType::Rgb32F),
+    ];
+    for (source, layout) in cases {
+        let kind = format!("{:?}", source.color());
+        // A stroke and a fill go through the overlay; each pairs with a pixel it covers fully.
+        let ops = [
+            (
+                ShapeOperation::new(
+                    ShapeKind::Line,
+                    Point::new(0.0, 0.0),
+                    Point::new(63.0, 63.0),
+                    RED,
+                    5.0,
+                ),
+                (32, 32),
+            ),
+            (
+                ShapeOperation::new(
+                    ShapeKind::Block,
+                    Point::new(40.0, 4.0),
+                    Point::new(60.0, 20.0),
+                    RED,
+                    1.0,
+                ),
+                (50, 12),
+            ),
+        ];
+        for (op, (x, y)) in ops {
+            let mut img = source.clone();
+            op.apply(&mut img);
+            assert_eq!(img.color(), layout, "{kind}");
+            assert_eq!(img.dimensions(), (64, 64), "{kind}");
+            let covered = img.to_rgba8().get_pixel(x, y).0;
+            assert_eq!(covered, [255, 0, 0, 255], "{kind} at ({x}, {y})");
+        }
+    }
+
+    // Untouched pixels of a 16-bit picture keep every bit.
+    let mut img = DynamicImage::ImageRgb16(image::ImageBuffer::from_pixel(64, 64, deep));
+    ShapeOperation::new(
+        ShapeKind::Line,
+        Point::new(0.0, 0.0),
+        Point::new(63.0, 63.0),
+        RED,
+        5.0,
+    )
+    .apply(&mut img);
+    assert_eq!(img.as_rgb16().unwrap().get_pixel(2, 60), &deep);
 }

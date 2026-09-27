@@ -1,8 +1,111 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use cosmic::iced::Color;
-use image::{DynamicImage, RgbaImage};
+use image::{DynamicImage, Rgb, Rgba, RgbaImage};
 use tiny_skia::{LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, Stroke, Transform};
+
+// WMDE: annotations are composited at the image's own depth and channel layout. The loader
+// keeps most formats in their native pixel type (an RGB WebP, a grey or 16-bit TIFF), and
+// the upstream `as_mut_rgba8().expect(..)` panicked on them, taking the unsaved edits along;
+// converting to RGBA8 instead would cost a 16-bit file its depth and an opaque one an alpha
+// channel it never had once saved.
+
+/// Make `image` able to take a coloured overlay.
+///
+/// RGB and RGBA at 8 and 16 bits and in float stay as they are. Grey gains colour channels:
+/// 8-bit grey becomes RGB8, 16-bit grey RGB16 or RGBA16. Anything else becomes RGBA8.
+pub fn prepare_for_overlay(image: &mut DynamicImage) {
+    let promoted = match image {
+        DynamicImage::ImageRgb8(_)
+        | DynamicImage::ImageRgba8(_)
+        | DynamicImage::ImageRgb16(_)
+        | DynamicImage::ImageRgba16(_)
+        | DynamicImage::ImageRgb32F(_)
+        | DynamicImage::ImageRgba32F(_) => return,
+        DynamicImage::ImageLuma8(_) => DynamicImage::ImageRgb8(image.to_rgb8()),
+        DynamicImage::ImageLuma16(_) => DynamicImage::ImageRgb16(image.to_rgb16()),
+        DynamicImage::ImageLumaA16(_) => DynamicImage::ImageRgba16(image.to_rgba16()),
+        _ => DynamicImage::ImageRgba8(image.to_rgba8()),
+    };
+    *image = promoted;
+}
+
+/// Source-over of one colour onto the pixel at `(x, y)`, at the image's own depth.
+///
+/// `color` is straight, channels 0.0..=1.0, with coverage `alpha`. The image has been through
+/// [`prepare_for_overlay`]; a layout that function does not leave is left untouched.
+pub fn blend_pixel(image: &mut DynamicImage, x: u32, y: u32, color: [f32; 3], alpha: f32) {
+    match image {
+        DynamicImage::ImageRgb8(buf) => blend_opaque(buf.get_pixel_mut(x, y), color, alpha),
+        DynamicImage::ImageRgba8(buf) => blend_translucent(buf.get_pixel_mut(x, y), color, alpha),
+        DynamicImage::ImageRgb16(buf) => blend_opaque(buf.get_pixel_mut(x, y), color, alpha),
+        DynamicImage::ImageRgba16(buf) => {
+            blend_translucent(buf.get_pixel_mut(x, y), color, alpha);
+        }
+        DynamicImage::ImageRgb32F(buf) => blend_opaque(buf.get_pixel_mut(x, y), color, alpha),
+        DynamicImage::ImageRgba32F(buf) => {
+            blend_translucent(buf.get_pixel_mut(x, y), color, alpha);
+        }
+        _ => {}
+    }
+}
+
+/// A channel value mapped to and from 0.0..=1.0.
+trait Channel: Copy {
+    fn to_unit(self) -> f32;
+    fn from_unit(value: f32) -> Self;
+}
+
+impl Channel for u8 {
+    fn to_unit(self) -> f32 {
+        f32::from(self) / 255.0
+    }
+
+    fn from_unit(value: f32) -> Self {
+        intensity_u8(value * 255.0)
+    }
+}
+
+impl Channel for u16 {
+    fn to_unit(self) -> f32 {
+        f32::from(self) / 65535.0
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // reason: clamped to 0.0..=65535.0 then rounded, in-range for u16
+    fn from_unit(value: f32) -> Self {
+        (value * 65535.0).round().clamp(0.0, 65535.0) as Self
+    }
+}
+
+impl Channel for f32 {
+    fn to_unit(self) -> f32 {
+        self
+    }
+
+    fn from_unit(value: f32) -> Self {
+        value
+    }
+}
+
+fn blend_opaque<C: Channel>(pixel: &mut Rgb<C>, color: [f32; 3], alpha: f32) {
+    for (channel, src) in pixel.0.iter_mut().zip(color) {
+        *channel = C::from_unit(src.mul_add(alpha, channel.to_unit() * (1.0 - alpha)));
+    }
+}
+
+fn blend_translucent<C: Channel>(pixel: &mut Rgba<C>, color: [f32; 3], alpha: f32) {
+    let dst_alpha = pixel.0[3].to_unit();
+    let out_alpha = dst_alpha.mul_add(1.0 - alpha, alpha);
+    if out_alpha <= 0.0 {
+        return;
+    }
+    for (channel, src) in pixel.0[..3].iter_mut().zip(color) {
+        *channel = C::from_unit(
+            (channel.to_unit() * dst_alpha).mul_add(1.0 - alpha, src * alpha) / out_alpha,
+        );
+    }
+    pixel.0[3] = C::from_unit(out_alpha);
+}
 
 pub fn build_path(f: impl FnOnce(&mut PathBuilder)) -> Option<Path> {
     let mut path_builder = PathBuilder::new();
@@ -28,8 +131,8 @@ const fn intensity_u8(value: f32) -> u8 {
 ///
 /// # Panics
 ///
-/// Panics if `image` is not RGBA, or if its dimensions cannot back a pixmap
-/// (zero-sized or larger than tiny-skia supports).
+/// Panics if the image dimensions cannot back a pixmap (zero-sized or larger than tiny-skia
+/// supports).
 pub fn stroke_on_image(
     image: &mut DynamicImage,
     path: &Path,
@@ -37,8 +140,8 @@ pub fn stroke_on_image(
     width: f32,
     line_cap: LineCap,
 ) {
-    let rgba = image.as_mut_rgba8().expect("image should be RGBA");
-    let (img_width, img_height) = (rgba.width(), rgba.height());
+    prepare_for_overlay(image);
+    let (img_width, img_height) = (image.width(), image.height());
 
     // Render stroke onto a transparent overlay to avoid premultiplication issues
     let mut overlay =
@@ -61,18 +164,18 @@ pub fn stroke_on_image(
     overlay.stroke_path(path, &paint, &stroke, Transform::identity(), None);
 
     // Composite overlay onto the image buffer
-    blend_overlay(rgba, &overlay);
+    blend_overlay(image, &overlay);
 }
 
 /// Fill a path onto a `DynamicImage` with the given color.
 ///
 /// # Panics
 ///
-/// Panics if `image` is not RGBA, or if its dimensions cannot back a pixmap
-/// (zero-sized or larger than tiny-skia supports).
+/// Panics if the image dimensions cannot back a pixmap (zero-sized or larger than tiny-skia
+/// supports).
 pub fn fill_on_image(image: &mut DynamicImage, path: &Path, color: Color) {
-    let rgba = image.as_mut_rgba8().expect("image should be RGBA");
-    let (img_width, img_height) = (rgba.width(), rgba.height());
+    prepare_for_overlay(image);
+    let (img_width, img_height) = (image.width(), image.height());
 
     let mut overlay =
         Pixmap::new(img_width, img_height).expect("image dimensions should produce a valid pixmap");
@@ -91,10 +194,35 @@ pub fn fill_on_image(image: &mut DynamicImage, path: &Path, color: Color) {
         Transform::identity(),
         None,
     );
-    blend_overlay(rgba, &overlay);
+    blend_overlay(image, &overlay);
 }
 
-fn blend_overlay(dst: &mut RgbaImage, overlay: &Pixmap) {
+fn blend_overlay(image: &mut DynamicImage, overlay: &Pixmap) {
+    let width = image.width() as usize;
+    let DynamicImage::ImageRgba8(dst) = image else {
+        for (index, src) in overlay.data().as_chunks::<4>().0.iter().enumerate() {
+            let alpha = f32::from(src[3]) / 255.0;
+            if alpha == 0.0 {
+                continue;
+            }
+            // Un-premultiply the overlay
+            let color = [src[0], src[1], src[2]].map(|c| f32::from(c) / 255.0 / alpha);
+            #[allow(clippy::cast_possible_truncation)]
+            // reason: x < width and y < height, both u32
+            blend_pixel(
+                image,
+                (index % width) as u32,
+                (index / width) as u32,
+                color,
+                alpha,
+            );
+        }
+        return;
+    };
+    blend_overlay_rgba8(dst, overlay);
+}
+
+fn blend_overlay_rgba8(dst: &mut RgbaImage, overlay: &Pixmap) {
     let overlay_data = overlay.data();
     let dst_data: &mut [u8] = dst.as_mut();
 

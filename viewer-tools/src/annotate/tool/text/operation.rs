@@ -440,9 +440,9 @@ impl ToolOperation for TextOperation {
         };
 
         // Composite the (rotated) layer onto the image at the footprint's top-left.
-        let rgba = image.as_mut_rgba8().expect("image should be RGBA");
+        crate::renderer::prepare_for_overlay(image);
         composite_over(
-            rgba,
+            image,
             &layer,
             self.bounding_box.x.round() as i32,
             self.bounding_box.y.round() as i32,
@@ -563,15 +563,17 @@ fn draw_run_underlines(
     }
 }
 
-/// Source-over composite of `src` onto `dst` with its top-left at `(ox, oy)` in `dst` space.
+/// Source-over composite of `src` onto `image` with its top-left at `(ox, oy)` in `image` space.
 // reason: layer/image pixel coordinates are within i32/u32 range; truncation is intended, bounds checked.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss
 )]
-fn composite_over(dst: &mut RgbaImage, src: &RgbaImage, ox: i32, oy: i32) {
-    let (dw, dh) = (dst.width() as i32, dst.height() as i32);
+// WMDE: takes the image at its own depth (see `renderer::prepare_for_overlay`); RGBA8 keeps
+// the upstream arithmetic.
+fn composite_over(image: &mut DynamicImage, src: &RgbaImage, ox: i32, oy: i32) {
+    let (dw, dh) = (image.width() as i32, image.height() as i32);
     for (lx, ly, px) in src.enumerate_pixels() {
         let alpha = f32::from(px[3]) / 255.0;
         if alpha <= 0.0 {
@@ -580,12 +582,17 @@ fn composite_over(dst: &mut RgbaImage, src: &RgbaImage, ox: i32, oy: i32) {
         let dx = ox + lx as i32;
         let dy = oy + ly as i32;
         if dx >= 0 && dx < dw && dy >= 0 && dy < dh {
-            let under = *dst.get_pixel(dx as u32, dy as u32);
-            dst.put_pixel(
-                dx as u32,
-                dy as u32,
-                blend_over(under, px[0], px[1], px[2], alpha),
-            );
+            if let DynamicImage::ImageRgba8(dst) = image {
+                let under = *dst.get_pixel(dx as u32, dy as u32);
+                dst.put_pixel(
+                    dx as u32,
+                    dy as u32,
+                    blend_over(under, px[0], px[1], px[2], alpha),
+                );
+            } else {
+                let color = [px[0], px[1], px[2]].map(|c| f32::from(c) / 255.0);
+                crate::renderer::blend_pixel(image, dx as u32, dy as u32, color, alpha);
+            }
         }
     }
 }
