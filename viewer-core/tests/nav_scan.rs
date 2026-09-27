@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use viewer_config::{SortMode, SortOrder};
-use viewer_core::{is_supported_image, scan_dir};
+use viewer_core::{NavState, is_supported_image, scan_dir};
 
 fn test_images_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../test_images"))
@@ -196,4 +196,25 @@ fn is_supported_image_consistency() {
     assert!(!is_supported_image(Path::new("file.mp4")));
     assert!(!is_supported_image(Path::new("file.pdf")));
     assert!(!is_supported_image(Path::new("file")));
+}
+
+// WMDE: the file asked for is the one shown, even when the scan did not list it.
+#[test]
+fn a_file_the_scan_left_out_is_shown_on_its_own() {
+    let dir = PathBuf::from("/pictures");
+    let listed = vec![dir.join("a.jpg"), dir.join("b.jpg")];
+    let asked = dir.join("photo.download");
+
+    let mut nav = NavState::new();
+    nav.set_images(dir.clone(), listed.clone(), Some(&asked));
+    assert_eq!(nav.images(), std::slice::from_ref(&asked));
+    assert_eq!(nav.current(), Some(&asked));
+
+    // A listed file keeps its album, and no selection keeps the whole list unselected.
+    nav.set_images(dir.clone(), listed.clone(), Some(&listed[1]));
+    assert_eq!(nav.images(), listed.as_slice());
+    assert_eq!(nav.index(), Some(1));
+    nav.set_images(dir, listed.clone(), None);
+    assert_eq!(nav.images(), listed.as_slice());
+    assert_eq!(nav.index(), None);
 }

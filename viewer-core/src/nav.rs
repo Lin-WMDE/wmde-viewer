@@ -65,6 +65,15 @@ impl NavState {
         self.dir = Some(dir);
         self.images = images;
         self.cur_idx = select.and_then(|path| self.images.iter().position(|pos| pos == path));
+        // WMDE: a file the directory scan leaves out (a name without a known extension, a
+        // hidden file) is still the one asked for. It is shown on its own instead of being
+        // swapped for the first picture of the folder, which Delete would then have trashed.
+        if self.cur_idx.is_none()
+            && let Some(path) = select
+        {
+            self.images = vec![path.to_path_buf()];
+            self.cur_idx = Some(0);
+        }
     }
 
     pub fn select(&mut self, idx: usize) -> Option<&PathBuf> {
