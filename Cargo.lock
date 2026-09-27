@@ -6121,6 +6121,7 @@ dependencies = [
 name = "viewer-core"
 version = "1.9.0"
 dependencies = [
+ "dirs 6.0.0",
  "fast_image_resize",
  "image",
  "kamadak-exif",
@@ -6132,8 +6133,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
  "turbojpeg",
  "viewer-config",
+ "wmde-bg-config",
  "zune-image",
 ]
 
@@ -7275,11 +7278,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
+name = "wmde-bg-config"
+version = "1.0.3"
+dependencies = [
+ "cosmic-config",
+ "derive_setters",
+ "image",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "wmde-viewer"
 version = "1.9.0"
 dependencies = [
  "chrono",
- "dirs 6.0.0",
  "i18n-embed",
  "i18n-embed-fl",
  "image",

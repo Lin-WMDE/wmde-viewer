@@ -158,7 +158,7 @@ error-save = Не вдалося зберегти зображення: { $error
 error-open-folder = Не вдалося відкрити теку
 error-open-link = Не вдалося відкрити посилання
 error-dialog = Не вдалося показати діалог вибору файлу
-error-wallpaper = Не вдалося зробити зображення тлом
+error-wallpaper = Не вдалося зробити зображення тлом: { $error }
 error-trash = Не вдалося пересунути «{ $file }» до смітника: { $error }
 error-restore = Не вдалося відновити зі смітника: { $error }
 # WMDE: the reason put after the colon of a failure

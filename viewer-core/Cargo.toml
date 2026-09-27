@@ -21,6 +21,11 @@ rayon.workspace = true
 resvg.workspace = true
 # WMDE: the temporary file behind save_image; already in the graph through other crates.
 tempfile = "3.27.0"
+# WMDE: set_wallpaper. The data directory a written wallpaper lives in, and the background
+# settings from wmde-bg's own crate, by path: it is upstream's cosmic-bg-config renamed, and
+# [patch] cannot rename a crate.
+dirs = "6.0.0"
+wmde-bg-config = { path = "../../wmde-bg/config" }
 turbojpeg.workspace = true
 zune-image.workspace = true
 
@@ -28,6 +33,7 @@ viewer-config = { path = "../viewer-config" }
 
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

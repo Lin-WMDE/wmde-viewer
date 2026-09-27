@@ -64,7 +64,8 @@ pub enum ViewerMessage {
     SetWallpaperOn(PathBuf, WallpaperTarget),
     ShowNavbar(bool),
     CloseWallpaperDialog,
-    WallpaperResult(Result<(), String>),
+    // WMDE: the error is the reason in the interface language and the detail for the journal.
+    WallpaperResult(Result<(), (String, String)>),
     CloseToast(ToastId),
     MoveToTrash,
     UndoTrash(ToastId, Arc<[PathBuf]>),

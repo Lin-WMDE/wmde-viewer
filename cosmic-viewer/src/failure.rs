@@ -6,7 +6,7 @@
 
 use crate::fl;
 use std::io;
-use viewer_core::{LoadError, SaveError};
+use viewer_core::{LoadError, SaveError, WallpaperError};
 
 pub fn io_reason(err: &io::Error) -> String {
     match err.kind() {
@@ -39,6 +39,15 @@ pub fn save_reason(err: &SaveError) -> String {
     match err {
         SaveError::Io(err) | SaveError::Encode(image::ImageError::IoError(err)) => io_reason(err),
         SaveError::Encode(_) => fl!("error-reason-unwritable"),
+    }
+}
+
+pub fn wallpaper_reason(err: &WallpaperError) -> String {
+    match err {
+        WallpaperError::Load(err) => load_reason(err),
+        WallpaperError::Save(err) => save_reason(err),
+        WallpaperError::Io(err) => io_reason(err),
+        WallpaperError::Config(_) | WallpaperError::NoDataDir => fl!("error-reason-system"),
     }
 }
 

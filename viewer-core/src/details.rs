@@ -291,7 +291,8 @@ fn coordinate(exif: &exif::Exif, tag: Tag, reference: Tag, negative: u8) -> Opti
 /// The format of the content, told the way the loader tells it: HEIF and AVIF by their `ftyp`
 /// box, JPEG XL by its signature, the rest by the `image` crate. SVG is text and goes by its
 /// name.
-fn content_format(path: &Path) -> Option<&'static str> {
+#[must_use]
+pub fn content_format(path: &Path) -> Option<&'static str> {
     let mut head = Vec::with_capacity(64);
     File::open(path)
         .and_then(|file| file.take(64).read_to_end(&mut head))

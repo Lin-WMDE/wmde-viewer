@@ -156,6 +156,9 @@ pub struct CosmicViewer {
     /// WMDE: moved on by every change to the current picture's file, so the drawer reads the
     /// file again.
     details_stamp: u64,
+    /// WMDE: wallpapers being set, and a quit waiting for them to finish.
+    wallpapers_running: usize,
+    quit_waiting: bool,
     about: About,
 }
 
@@ -304,6 +307,39 @@ impl CosmicViewer {
         self.viewport.cancel_tool();
         self.text_editing = false;
         Ok(self.load_full_image(path))
+    }
+
+    // WMDE: the background through wmde-bg's own settings crate (`viewer_core::set_wallpaper`)
+    // instead of RON written by hand, off the drawing thread: a picture wmde-bg cannot read is
+    // decoded and written as a PNG first. Requests go in turn, and a later one supersedes one
+    // still waiting, so the last picture asked for is the one on the desktop. A plain thread, as
+    // for OpenContaining: a file on a dead mount must not hold the exit.
+    fn wallpaper_task(
+        &mut self,
+        path: PathBuf,
+        output: Option<String>,
+    ) -> Task<Action<ViewerMessage>> {
+        self.wallpapers_running += 1;
+        let request = viewer_core::wallpaper::next_request();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            let result =
+                viewer_core::wallpaper::set_wallpaper_in_turn(request, &path, output.as_deref())
+                    .map(drop)
+                    .map_err(|err| {
+                        (
+                            failure::wallpaper_reason(&err),
+                            format!("{}: {err}", path.display()),
+                        )
+                    });
+            _ = sender.send(result);
+        });
+        future(async move {
+            let result = receiver
+                .await
+                .unwrap_or_else(|err| Err((fl!("error-reason-system"), err.to_string())));
+            Action::App(ViewerMessage::WallpaperResult(result))
+        })
     }
 
     fn is_narrow(&self) -> bool {
@@ -1755,6 +1791,8 @@ impl Application for CosmicViewer {
             canvas_path: None,
             details: None,
             details_stamp: 0,
+            wallpapers_running: 0,
+            quit_waiting: false,
             about: About::default()
                 .name(fl!("app-name"))
                 .icon(icon::from_name(Self::APP_ID))
@@ -2373,6 +2411,16 @@ impl Application for CosmicViewer {
                 return self.resolve_pending();
             }
             ViewerMessage::Quit => {
+                // WMDE: a wallpaper still being set is finished first: the thread would die
+                // with the process, possibly between two of the settings it writes. A second
+                // quit, or 20 s, ends the wait.
+                if self.wallpapers_running > 0 && !self.quit_waiting {
+                    self.quit_waiting = true;
+                    return future(async {
+                        tokio::time::sleep(Duration::from_secs(20)).await;
+                        Action::App(ViewerMessage::Quit)
+                    });
+                }
                 return iced::exit();
             }
             ViewerMessage::CloseRequested => {
@@ -2466,35 +2514,21 @@ impl Application for CosmicViewer {
                                 viewer_config::WallpaperBehavior::Ask => {
                                     self.available_outputs = get_cosmic_outputs();
                                     if self.available_outputs.len() <= 1 {
-                                        return future(async move {
-                                            let result = set_wallpaper_cosmic_on(&path, None);
-                                            Action::App(ViewerMessage::WallpaperResult(result))
-                                        });
+                                        return self.wallpaper_task(path, None);
                                     }
                                     self.wallpaper_dialog = Some(path);
                                 }
                                 viewer_config::WallpaperBehavior::AllDisplays => {
-                                    return future(async move {
-                                        let result = set_wallpaper_cosmic_on(&path, None);
-                                        Action::App(ViewerMessage::WallpaperResult(result))
-                                    });
+                                    return self.wallpaper_task(path, None);
                                 }
                                 viewer_config::WallpaperBehavior::CurrentDisplay => {
                                     let outputs = get_cosmic_outputs();
-                                    let output = outputs.first().cloned();
-                                    return future(async move {
-                                        let result =
-                                            set_wallpaper_cosmic_on(&path, output.as_deref());
-                                        Action::App(ViewerMessage::WallpaperResult(result))
-                                    });
+                                    return self.wallpaper_task(path, outputs.first().cloned());
                                 }
                             }
                         } else {
                             // Non-WMDE Linux: set on all outputs
-                            return future(async move {
-                                let result = set_wallpaper_cosmic_on(&path, None);
-                                Action::App(ViewerMessage::WallpaperResult(result))
-                            });
+                            return self.wallpaper_task(path, None);
                         }
                     }
                     #[cfg(not(target_os = "linux"))]
@@ -2510,17 +2544,22 @@ impl Application for CosmicViewer {
                     crate::message::WallpaperTarget::All => None,
                     crate::message::WallpaperTarget::Output(name) => Some(name),
                 };
-                return future(async move {
-                    let result = set_wallpaper_cosmic_on(&path, output.as_deref());
-                    Action::App(ViewerMessage::WallpaperResult(result))
-                });
+                return self.wallpaper_task(path, output);
             }
             ViewerMessage::CloseWallpaperDialog => {
                 self.wallpaper_dialog = None;
             }
             ViewerMessage::WallpaperResult(result) => {
-                if let Err(err) = result {
-                    tasks.push(self.complain("set the wallpaper", &err, fl!("error-wallpaper")));
+                self.wallpapers_running = self.wallpapers_running.saturating_sub(1);
+                if let Err((reason, detail)) = result {
+                    tasks.push(self.complain(
+                        "set the wallpaper",
+                        &detail,
+                        fl!("error-wallpaper", error = reason),
+                    ));
+                }
+                if self.quit_waiting && self.wallpapers_running == 0 {
+                    return iced::exit();
                 }
             }
             ViewerMessage::MoveToTrash => {
@@ -4722,200 +4761,6 @@ fn set_wallpaper_portable(path: &std::path::Path) -> Result<(), String> {
             .ok_or_else(|| "Invalid file path".to_string())?,
     )
     .map_err(|e| format!("Failed to set wallpaper: {e}"))
-}
-
-fn set_wallpaper_cosmic_on(path: &std::path::Path, output: Option<&str>) -> Result<(), String> {
-    let config_dir = dirs::config_dir()
-        .ok_or("Could not find config directory")?
-        .join("wmde/fun.wmde.Background/v1");
-
-    std::fs::create_dir_all(&config_dir)
-        .map_err(|e| format!("Failed to create config directory: {e}"))?;
-
-    let path_str = path.to_string_lossy();
-
-    let (config_filename, output_field) = output.map_or_else(
-        || ("all".to_string(), "all".to_string()),
-        |name| (format!("output.{name}"), name.to_string()),
-    );
-
-    let config_path = config_dir.join(&config_filename);
-
-    let same_on_all_path = config_dir.join("same-on-all");
-    if let Some(output_name) = output {
-        std::fs::write(&same_on_all_path, "false\n")
-            .map_err(|e| format!("Failed to write same-on-all: {e}"))?;
-
-        update_backgrounds_list(&config_dir, output_name)?;
-    } else {
-        std::fs::write(&same_on_all_path, "true\n")
-            .map_err(|e| format!("Failed to write same-on-all: {e}"))?;
-    }
-
-    let content = if config_path.exists() {
-        let existing = std::fs::read_to_string(&config_path)
-            .map_err(|e| format!("Failed to read config: {e}"))?;
-        update_source_in_config(&existing, &path_str)
-    } else {
-        format!(
-            r#"(
-    output: "{output_field}",
-    source: Path("{path_str}"),
-    filter_by_theme: false,
-    rotation_frequency: 300,
-    filter_method: Lanczos,
-    scaling_mode: Zoom,
-    sampling_method: Alphanumeric,
-)
-"#
-        )
-    };
-
-    std::fs::write(&config_path, content)
-        .map_err(|e| format!("Failed to write config file: {e}"))?;
-
-    add_to_cosmic_settings_custom_images(path)?;
-
-    Ok(())
-}
-
-fn add_to_cosmic_settings_custom_images(path: &std::path::Path) -> Result<(), String> {
-    let config_dir = dirs::config_dir()
-        .ok_or("Could not find config directory")?
-        .join("wmde/fun.wmde.Settings.Wallpaper/v1");
-
-    std::fs::create_dir_all(&config_dir)
-        .map_err(|e| format!("Failed to create config directory: {e}"))?;
-
-    let custom_images_path = config_dir.join("custom-images");
-
-    let mut custom_images: Vec<PathBuf> = std::fs::read_to_string(&custom_images_path)
-        .ok()
-        .and_then(|content| parse_path_list(&content))
-        .unwrap_or_default();
-
-    let path_buf = path.to_path_buf();
-    if !custom_images.contains(&path_buf) {
-        custom_images.push(path_buf);
-    }
-
-    // Remove any duplicates
-    let mut seen = std::collections::HashSet::new();
-    custom_images.retain(|p| seen.insert(p.clone()));
-
-    let content = format!(
-        "[\n    {},\n]",
-        custom_images
-            .iter()
-            .map(|p| format!("\"{}\"", p.display()))
-            .collect::<Vec<_>>()
-            .join(",\n    ")
-    );
-    std::fs::write(&custom_images_path, content)
-        .map_err(|e| format!("Failed to write custom-images: {e}"))?;
-
-    Ok(())
-}
-
-fn parse_path_list(content: &str) -> Option<Vec<PathBuf>> {
-    let trimmed = content.trim();
-    if trimmed.starts_with('[') && trimmed.ends_with(']') {
-        let inner = &trimmed[1..trimmed.len() - 1];
-        Some(
-            inner
-                .split(',')
-                .filter_map(|s| {
-                    let s = s.trim().trim_matches('"');
-                    if s.is_empty() {
-                        None
-                    } else {
-                        Some(PathBuf::from(s))
-                    }
-                })
-                .collect(),
-        )
-    } else {
-        None
-    }
-}
-
-fn update_backgrounds_list(config_dir: &std::path::Path, output_name: &str) -> Result<(), String> {
-    let backgrounds_path = config_dir.join("backgrounds");
-    let mut backgrounds: Vec<String> = std::fs::read_to_string(&backgrounds_path)
-        .ok()
-        .and_then(|content| parse_backgrounds_list(&content))
-        .unwrap_or_default();
-
-    if !backgrounds.contains(&output_name.to_string()) {
-        backgrounds.push(output_name.to_string());
-        let content = format!(
-            "[\n    {},\n]",
-            backgrounds
-                .iter()
-                .map(|s| format!("\"{s}\""))
-                .collect::<Vec<_>>()
-                .join(",\n    ")
-        );
-        std::fs::write(&backgrounds_path, content)
-            .map_err(|e| format!("Failed to write backgrounds: {e}"))?;
-    }
-
-    Ok(())
-}
-
-fn parse_backgrounds_list(content: &str) -> Option<Vec<String>> {
-    let trimmed = content.trim();
-    if trimmed.starts_with('[') && trimmed.ends_with(']') {
-        let inner = &trimmed[1..trimmed.len() - 1];
-        Some(
-            inner
-                .split(',')
-                .filter_map(|s| {
-                    let s = s.trim().trim_matches('"');
-                    if s.is_empty() {
-                        None
-                    } else {
-                        Some(s.to_string())
-                    }
-                })
-                .collect(),
-        )
-    } else {
-        None
-    }
-}
-
-fn update_source_in_config(existing: &str, new_path: &str) -> String {
-    let mut result = String::new();
-    let mut skip_until_comma_or_paren = false;
-
-    for line in existing.lines() {
-        let trimmed = line.trim();
-
-        if skip_until_comma_or_paren {
-            if trimmed.ends_with(',') || trimmed.ends_with(')') {
-                skip_until_comma_or_paren = false;
-            }
-            continue;
-        }
-
-        if trimmed.starts_with("source:") {
-            writeln!(result, "    source: Path(\"{new_path}\"),")
-                .expect("writing to a String is infallible");
-            if !trimmed.ends_with(',') && !trimmed.ends_with(')') {
-                skip_until_comma_or_paren = true;
-            }
-        } else {
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-
-    if !existing.ends_with('\n') && result.ends_with('\n') {
-        result.pop();
-    }
-
-    result
 }
 
 /// Override the base Icon appearance with the COSMIC selected-icon-button look when selected:

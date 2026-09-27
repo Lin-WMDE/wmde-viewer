@@ -166,6 +166,30 @@ fn load_image_sync(path: &Path) -> Result<LoadedImage, LoadError> {
     Ok(loaded_image(path, img))
 }
 
+/// WMDE: the whole picture at `path` for a wallpaper file.
+///
+/// It is turned the way the file asks and is no longer than `max` on either side; an SVG is
+/// drawn to that size rather than to the texture size. Blocks; call it off the drawing thread.
+///
+/// # Errors
+///
+/// Returns [`LoadError`] if the file cannot be read or decoded.
+pub fn load_for_wallpaper(path: &Path, max: u32) -> Result<DynamicImage, LoadError> {
+    let is_svg = path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"));
+    let image = if is_svg {
+        load_svg_at(path, max)?.image
+    } else {
+        load_image_sync(path)?.image
+    };
+    Ok(if image.width() > max || image.height() > max {
+        image.resize(max, max, image::imageops::FilterType::CatmullRom)
+    } else {
+        image
+    })
+}
+
 // WMDE: the content picks the decoder, the extension only breaks a tie. A file opened from the
 // file manager under a name the viewer does not know, or under none, then opens instead of
 // failing on its name.
