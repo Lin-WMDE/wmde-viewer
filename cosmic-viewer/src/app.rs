@@ -470,21 +470,21 @@ impl CosmicViewer {
             .and_then(|path| self.cache.get_full(path))
             .map(|cached| cached.image);
 
+        // WMDE: the cached original is shared, and each operation makes a new picture from it;
+        // with none, the canvas shares the original's pixels.
         if let Some(mut base) = original {
             for op in self.viewport.operations() {
                 if let Some(rotate) = op.as_any().downcast_ref::<RotateOperation>() {
-                    base = match rotate.direction {
+                    base = Arc::new(match rotate.direction {
                         RotateDirection::Left => base.rotate270(),
                         RotateDirection::Right => base.rotate90(),
-                    };
+                    });
                 } else if let Some(crop) = op.as_any().downcast_ref::<CropOperation>() {
-                    base = crop_to_region(&base, crop.region);
+                    base = Arc::new(crop_to_region(&base, crop.region));
                 }
             }
 
-            if let Some(img) = self.viewport.working_image_mut() {
-                *img = base;
-            }
+            self.viewport.replace_working_image(base);
 
             self.viewport.rebuild_display();
         }
@@ -549,7 +549,7 @@ impl CosmicViewer {
             }
             _ => Task::none(),
         };
-        if self.cache.get_full(&path).is_some() || self.cache.is_pending(&path) {
+        if self.cache.contains_full(&path) || self.cache.is_pending(&path) {
             return window_title;
         }
 
@@ -563,7 +563,7 @@ impl CosmicViewer {
                         loaded.path.clone(),
                         CachedImage {
                             handle: loaded.handle,
-                            image: loaded.image,
+                            image: Arc::new(loaded.image),
                             width: loaded.width,
                             height: loaded.height,
                         },
@@ -1363,7 +1363,8 @@ impl CosmicViewer {
         } else {
             // No baked working image (nothing edited): flatten every op onto the cached original.
             let current = self.nav.current()?;
-            let mut image = self.cache.get_full(current)?.image;
+            // The operations draw on a copy: the cached original stays as it was loaded.
+            let mut image = DynamicImage::clone(&self.cache.get_full(current)?.image);
             for op in self.viewport.operations() {
                 op.apply(&mut image);
             }
@@ -3177,7 +3178,7 @@ impl Application for CosmicViewer {
                                 .update::<ViewerMessage>(ColorPickerUpdate::ToggleColorPicker);
                         }
 
-                        if self.cache.get_full(&path).is_some() {
+                        if self.cache.contains_full(&path) {
                             self.viewport.revert_all();
                             self.show_cached(path.clone());
                         }
@@ -3192,7 +3193,7 @@ impl Application for CosmicViewer {
                             let dist = idx.abs_diff(adj_idx);
                             if dist != 0
                                 && dist <= 1
-                                && self.cache.get_full(adj_path).is_none()
+                                && !self.cache.contains_full(adj_path)
                                 && !self.cache.is_pending(adj_path)
                             {
                                 tasks.push(self.load_full_image(adj_path.clone()));
@@ -3242,7 +3243,7 @@ impl Application for CosmicViewer {
                         }
 
                         if let Some(path) = self.nav.current().cloned()
-                            && self.cache.get_full(&path).is_none()
+                            && !self.cache.contains_full(&path)
                         {
                             tasks.push(self.load_full_image(path));
                         }
@@ -3975,9 +3976,8 @@ impl Application for CosmicViewer {
 
                             self.viewport.apply_tool();
 
-                            if let Some(img) = self.viewport.working_image_mut() {
-                                *img = crop_to_region(img, region);
-                            }
+                            self.viewport
+                                .map_working_image(|img| crop_to_region(img, region));
                             self.viewport.rebuild_display();
                             self.viewport.set_zoom(1.0);
                             self.viewport.set_pan(Vector::ZERO);
@@ -4029,9 +4029,7 @@ impl Application for CosmicViewer {
                         self.viewport
                             .commit(Box::new(RotateOperation::new(direction)));
 
-                        if let Some(img) = self.viewport.working_image_mut() {
-                            *img = img.rotate270();
-                        }
+                        self.viewport.map_working_image(DynamicImage::rotate270);
                         self.viewport.rebuild_display();
                         self.viewport.set_actual_percent(percent, viewport_size);
 
@@ -4069,9 +4067,7 @@ impl Application for CosmicViewer {
                         self.viewport
                             .commit(Box::new(RotateOperation::new(direction)));
 
-                        if let Some(img) = self.viewport.working_image_mut() {
-                            *img = img.rotate90();
-                        }
+                        self.viewport.map_working_image(DynamicImage::rotate90);
                         self.viewport.rebuild_display();
                         self.viewport.set_actual_percent(percent, viewport_size);
 
@@ -4446,12 +4442,10 @@ impl Application for CosmicViewer {
                                     op.transform_rotate(inverse, image_size);
                                 }
 
-                                if let Some(img) = self.viewport.working_image_mut() {
-                                    *img = match inverse {
-                                        RotateDirection::Left => img.rotate270(),
-                                        RotateDirection::Right => img.rotate90(),
-                                    };
-                                }
+                                self.viewport.map_working_image(|img| match inverse {
+                                    RotateDirection::Left => img.rotate270(),
+                                    RotateDirection::Right => img.rotate90(),
+                                });
                                 self.rebuild_working_image();
                             } else if let Some(crop) = op.as_any().downcast_ref::<CropOperation>() {
                                 let region = crop.region;

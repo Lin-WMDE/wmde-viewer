@@ -18,7 +18,7 @@ use cosmic::{
     widget::{self, Operation, Widget, canvas::Cache, image::Handle},
 };
 use image::DynamicImage;
-use std::cell::Cell;
+use std::{cell::Cell, sync::Arc};
 use viewer_tools::{
     ToolOperation,
     crop::{CropSelection, DragHandle},
@@ -44,7 +44,9 @@ pub struct ViewportManager {
     image: Option<CanvasImage>,
     cache: Cache,
     dirty: Cell<bool>,
-    working_image: Option<DynamicImage>,
+    // WMDE: the full picture from the cache, shared until an edit replaces it, so the picture on
+    // the canvas is not a second copy of its pixels.
+    working_image: Option<Arc<DynamicImage>>,
     zoom: f32,
     pan: Vector,
     active_tool: Option<ToolKind>,
@@ -100,7 +102,7 @@ impl ViewportManager {
         &mut self.operations
     }
 
-    pub fn set_image(&mut self, image: Option<CanvasImage>, base: Option<DynamicImage>) {
+    pub fn set_image(&mut self, image: Option<CanvasImage>, base: Option<Arc<DynamicImage>>) {
         let image = match (image, base.as_ref()) {
             (Some(mut img), Some(base)) => {
                 img.width = base.width();
@@ -141,11 +143,11 @@ impl ViewportManager {
 
         self.operations.clear();
         self.redo_stack.clear();
-        self.working_image = Some(working);
+        self.working_image = Some(Arc::new(working));
     }
 
     pub fn rebuild_display(&mut self) {
-        if let Some(ref working) = self.working_image {
+        if let Some(working) = self.working_image.as_deref() {
             let (width, height) = (working.width(), working.height());
             let handle = display_handle(working);
             self.image = Some(CanvasImage {
@@ -156,12 +158,23 @@ impl ViewportManager {
         }
     }
 
-    pub const fn working_image(&self) -> Option<&DynamicImage> {
-        self.working_image.as_ref()
+    pub fn working_image(&self) -> Option<&DynamicImage> {
+        self.working_image.as_deref()
     }
 
-    pub const fn working_image_mut(&mut self) -> Option<&mut DynamicImage> {
-        self.working_image.as_mut()
+    /// WMDE: put what `edit` makes of the working image in its place. An edit makes a new
+    /// picture, turned or cropped, so the one it replaces is never copied first.
+    pub fn map_working_image(&mut self, edit: impl FnOnce(&DynamicImage) -> DynamicImage) {
+        if let Some(working) = &mut self.working_image {
+            *working = Arc::new(edit(working));
+        }
+    }
+
+    /// WMDE: put `image` in place of the working image, if there is one.
+    pub fn replace_working_image(&mut self, image: Arc<DynamicImage>) {
+        if let Some(working) = &mut self.working_image {
+            *working = image;
+        }
     }
 
     pub const fn zoom(&self) -> f32 {

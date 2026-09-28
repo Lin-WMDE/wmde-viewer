@@ -2,7 +2,7 @@
 
 use cosmic::widget::image::Handle;
 use image::DynamicImage;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 use viewer_core::{CachedImage, ImageCache};
 
 fn dummy_cached(w: u32, h: u32) -> CachedImage {
@@ -11,7 +11,7 @@ fn dummy_cached(w: u32, h: u32) -> CachedImage {
     let handle = Handle::from_rgba(w, h, rgba.into_raw());
     CachedImage {
         handle,
-        image: img,
+        image: Arc::new(img),
         width: w,
         height: h,
     }
@@ -186,4 +186,17 @@ fn resize_cache_evicts_excess() {
         }
     }
     assert!(remaining <= 2);
+}
+
+// WMDE: a picture handed out of the cache is the same pixels, not a copy of them.
+#[test]
+fn a_cached_picture_is_shared_not_copied() {
+    let cache = ImageCache::new(2, 2);
+    let path = PathBuf::from("/tmp/cache-share/full.jpg");
+    cache.insert_full(path.clone(), dummy_cached(64, 32));
+    let first = cache.get_full(&path).expect("cached");
+    let second = cache.get_full(&path).expect("cached");
+    assert!(Arc::ptr_eq(&first.image, &second.image));
+    assert!(cache.contains_full(&path));
+    assert_eq!(cache.full_size(&path), Some((64, 32)));
 }

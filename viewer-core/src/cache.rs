@@ -13,7 +13,10 @@ use std::{
 #[derive(Clone)]
 pub struct CachedImage {
     pub handle: Handle,
-    pub image: DynamicImage,
+    // WMDE: shared, not owned: a picture handed out of the cache, to the canvas or anywhere
+    // else, is the same pixels and not a copy of them. The canvas replaces its own on an edit
+    // and leaves this one as it was loaded.
+    pub image: Arc<DynamicImage>,
     pub width: u32,
     pub height: u32,
 }
@@ -64,12 +67,14 @@ impl ImageCache {
         }
     }
 
+    /// The cached full picture, made the most recently used. Its pixels are shared, not copied.
     #[must_use]
     pub fn get_full(&self, path: &PathBuf) -> Option<CachedImage> {
         self.full_images.lock().ok()?.get(path).cloned()
     }
 
-    /// WMDE: whether the full picture is cached, without cloning it as `get_full` does.
+    /// WMDE: whether the full picture is cached, without making it the most recently used as
+    /// `get_full` does.
     #[must_use]
     pub fn contains_full(&self, path: &PathBuf) -> bool {
         self.full_images
@@ -77,8 +82,8 @@ impl ImageCache {
             .is_ok_and(|cache| cache.contains(path))
     }
 
-    /// WMDE: the size of the cached full picture, turned as shown, without cloning it as
-    /// `get_full` does and without making it the most recently used.
+    /// WMDE: the size of the cached full picture, turned as shown, without making it the most
+    /// recently used.
     #[must_use]
     pub fn full_size(&self, path: &PathBuf) -> Option<(u32, u32)> {
         self.full_images
