@@ -533,17 +533,21 @@ impl CosmicViewer {
     }
 
     fn load_full_image(&mut self, path: PathBuf) -> Task<Action<ViewerMessage>> {
-        let window_title = format!(
-            "{} - {}",
-            path.file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            fl!("app-name")
-        );
-        let window_title = if let Some(window_id) = self.core.main_window_id() {
-            self.set_window_title(window_title.clone(), window_id)
-        } else {
-            Task::none()
+        // WMDE: the title names the current picture, and names it now. It was set once each
+        // load ended, neighbours loaded ahead of time included, so the window was titled after
+        // whichever load finished last.
+        let window_title = match self.core.main_window_id() {
+            Some(window_id) if self.nav.current() == Some(&path) => {
+                let title = format!(
+                    "{} - {}",
+                    path.file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                    fl!("app-name")
+                );
+                self.set_window_title(title, window_id)
+            }
+            _ => Task::none(),
         };
         if self.cache.get_full(&path).is_some() || self.cache.is_pending(&path) {
             return window_title;
@@ -552,7 +556,7 @@ impl CosmicViewer {
         self.cache.set_pending(path.clone());
         let cache = self.cache.clone();
 
-        future(async move {
+        let load = future(async move {
             match load_image(path.clone()).await {
                 Ok(loaded) => {
                     cache.insert_full(
@@ -572,8 +576,8 @@ impl CosmicViewer {
                     detail: err.to_string(),
                 })),
             }
-        })
-        .chain(window_title)
+        });
+        Task::batch([window_title, load])
     }
 
     fn image_details_page(&self) -> Element<'_, ViewerMessage> {
