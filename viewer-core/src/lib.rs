@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+mod budget;
 pub mod cache;
 pub mod clipboard;
 pub mod details;

@@ -30,8 +30,19 @@ pub fn load_reason(err: &LoadError) -> String {
             fl!("error-reason-unreadable")
         }
         LoadError::Io(err) | LoadError::Decode(image::ImageError::IoError(err)) => io_reason(err),
+        // WMDE: a decoder that ran into the memory limit it was given.
+        LoadError::Decode(image::ImageError::Limits(_)) => fl!("error-reason-no-memory"),
         LoadError::Decode(_) | LoadError::UnsupportedFormat(_) => fl!("error-reason-unreadable"),
         LoadError::NoPreview => fl!("error-reason-no-preview"),
+        // Need rounded up and what is free rounded down: the one shown is always the larger.
+        LoadError::TooLarge { needed, available } => {
+            let (needed, available) = (needed.div_ceil(1_000_000), available / 1_000_000);
+            fl!(
+                "error-reason-too-large",
+                needed = needed,
+                available = available
+            )
+        }
         LoadError::Cancelled => fl!("error-reason-system"),
     }
 }

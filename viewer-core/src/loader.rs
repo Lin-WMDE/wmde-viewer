@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::raw;
+use crate::{budget, raw};
 use cosmic::widget::image::Handle;
-use fast_image_resize::{PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image as FirImage};
-use image::{DynamicImage, ImageBuffer, Pixel, RgbaImage, metadata::Orientation};
+use fast_image_resize::{
+    FilterType as ResizeFilter, PixelType, ResizeAlg, ResizeOptions, Resizer,
+    images::{Image as FirImage, ImageRef},
+};
+use image::{DynamicImage, ImageBuffer, ImageDecoder, Pixel, RgbaImage, metadata::Orientation};
 use libheif_rs::{ColorSpace as HeifColorSpace, HeifContext, LibHeif, RgbChroma};
 use resvg::{tiny_skia, usvg};
 use std::{
     fmt::{self, Debug, Formatter},
     fs::{self, File},
-    io::{BufReader, Read, Seek, SeekFrom},
+    io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -19,7 +22,7 @@ use zune_image::image::Image as ZuneImage;
 
 // Cap texture uploads at 2048px on the long edge; the full-resolution image
 // is kept separately so edits and saves operate on the real pixels, not the texture.
-const MAX_TEX: u32 = 2048;
+pub(crate) const MAX_TEX: u32 = 2048;
 
 #[derive(Debug, Error)]
 pub enum LoadError {
@@ -32,6 +35,9 @@ pub enum LoadError {
     // WMDE: a camera RAW file is shown through the preview inside it, and this one has none.
     #[error("no preview inside the RAW file")]
     NoPreview,
+    // WMDE: the decode would need more memory than it may take now; both in bytes.
+    #[error("the picture needs {needed} bytes to decode and {available} are free for it")]
+    TooLarge { needed: u64, available: u64 },
     #[error("Task cancelled")]
     Cancelled,
 }
@@ -57,15 +63,54 @@ impl Debug for LoadedImage {
 }
 
 // Display texture, downscaled to MAX_TEX. The source image is left full-res.
+// WMDE: downscaled from the picture as it is, in its own pixel type. It went through a full RGBA
+// copy first, and the resizer took a copy of that too: a 100 megapixel JPEG peaked at over a
+// gigabyte to make a texture of 16 MB.
 fn display_handle(image: &DynamicImage) -> Handle {
+    if image.width() > MAX_TEX || image.height() > MAX_TEX {
+        match downscaled(image, MAX_TEX, ResizeFilter::Bilinear) {
+            Ok(small) => return rgba_handle(&small),
+            Err(err) => tracing::warn!("cannot downscale the texture: {err}"),
+        }
+    }
+    rgba_handle(image)
+}
+
+fn rgba_handle(image: &DynamicImage) -> Handle {
     let rgba = image.to_rgba8();
     let (width, height) = rgba.dimensions();
-    if (width > MAX_TEX || height > MAX_TEX)
-        && let Ok((tw, th, pixels)) = fast_resize_rgba(rgba.as_raw(), width, height, MAX_TEX)
-    {
-        return Handle::from_rgba(tw, th, pixels);
-    }
     Handle::from_rgba(width, height, rgba.into_raw())
+}
+
+/// WMDE: `image` fitted within `max` on its longer side, in its own pixel type, read in place.
+fn downscaled(
+    image: &DynamicImage,
+    max: u32,
+    filter: ResizeFilter,
+) -> Result<DynamicImage, LoadError> {
+    let (width, height) = fit_within(image.width(), image.height(), max);
+    let mut small = DynamicImage::new(width, height, image.color());
+    Resizer::new()
+        .resize(
+            image,
+            &mut small,
+            &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(filter)),
+        )
+        .map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
+    Ok(small)
+}
+
+/// WMDE: the RGBA pixels of a thumbnail no larger than `max`, made from `image` without an RGBA
+/// copy of the whole picture.
+fn thumbnail_pixels(image: DynamicImage, max: u32) -> Result<(u32, u32, Vec<u8>), LoadError> {
+    let small = if image.width() > max || image.height() > max {
+        downscaled(&image, max, ResizeFilter::Bilinear)?
+    } else {
+        image
+    };
+    let rgba = small.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Ok((width, height, rgba.into_raw()))
 }
 
 // WMDE: EXIF orientation is applied to the pixels here, at decode. The texture is built with
@@ -83,6 +128,20 @@ fn exif_orientation(path: &Path) -> Option<Orientation> {
         .value
         .get_uint(0)?;
     Orientation::from_exif(u8::try_from(value).ok()?)
+}
+
+/// WMDE: how many whole pictures turning one takes: a quarter turn builds the turned picture
+/// beside the old one, a half turn and the flips work in place. The memory budget counts it.
+const fn turn_copies(orientation: Option<Orientation>) -> u64 {
+    match orientation {
+        Some(
+            Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH,
+        ) => 2,
+        _ => 1,
+    }
 }
 
 /// A full-resolution decode of `path`, turned the way the file asks to be viewed.
@@ -184,8 +243,7 @@ fn load_image_sync(path: &Path) -> Result<LoadedImage, LoadError> {
     }
 
     // Standard image formats via the 'image' crate
-    let img = open_by_content(path)?;
-    Ok(loaded_image(path, img))
+    load_with_image(path)
 }
 
 /// WMDE: the whole picture at `path` for a wallpaper file.
@@ -202,8 +260,10 @@ pub fn load_for_wallpaper(path: &Path, max: u32) -> Result<DynamicImage, LoadErr
     } else {
         load_image_sync(path)?.image
     };
+    // WMDE: through the resizer that reads the picture in place; `DynamicImage::resize` holds an
+    // intermediate in 32-bit float, several times the picture's own size.
     Ok(if image.width() > max || image.height() > max {
-        image.resize(max, max, image::imageops::FilterType::CatmullRom)
+        downscaled(&image, max, ResizeFilter::CatmullRom)?
     } else {
         image
     })
@@ -212,7 +272,12 @@ pub fn load_for_wallpaper(path: &Path, max: u32) -> Result<DynamicImage, LoadErr
 // WMDE: the content picks the decoder, the extension only breaks a tie. A file opened from the
 // file manager under a name the viewer does not know, or under none, then opens instead of
 // failing on its name.
-fn open_by_content(path: &Path) -> Result<DynamicImage, LoadError> {
+// WMDE: with the memory held for it, which the caller keeps until the picture is turned and
+// its texture made; `copies` as for `decode_within_budget`.
+fn open_by_content(
+    path: &Path,
+    copies: u64,
+) -> Result<(DynamicImage, budget::Reservation), LoadError> {
     register_jpeg_xl();
     let reader = image::ImageReader::open(path)?.with_guessed_format()?;
     // TIFF is also the container of most camera RAW formats (NEF, DNG, ARW and others), whose
@@ -227,7 +292,67 @@ fn open_by_content(path: &Path) -> Result<DynamicImage, LoadError> {
             "TIFF content under another name, likely a camera RAW".into(),
         ));
     }
-    Ok(reader.decode()?)
+    decode_within_budget(reader, copies)
+}
+
+/// WMDE: a decode through the `image` crate within the memory budget, refused from its header
+/// before a pixel is read, and the memory held for it. Its decoders were held to the crate's
+/// default of 512 MiB instead, which refused a larger picture as a damaged file however much
+/// was free, and took a smaller one however little was.
+///
+/// `copies` is how many whole pictures the caller holds at once, 2 when it turns the picture
+/// by a quarter. The JPEG decoder may hold the coefficients of the whole picture besides, which
+/// its header here does not tell.
+fn decode_within_budget<R: BufRead + Seek>(
+    mut reader: image::ImageReader<R>,
+    copies: u64,
+) -> Result<(DynamicImage, budget::Reservation), LoadError> {
+    let coefficients = if reader.format() == Some(image::ImageFormat::Jpeg) {
+        2
+    } else {
+        0
+    };
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(budget::for_decode());
+    reader.limits(limits);
+    let decoder = reader.into_decoder()?;
+    let (width, height) = decoder.dimensions();
+    let color = decoder.color_type();
+    let held = budget::reserve(budget::peak(
+        width,
+        height,
+        u64::from(color.bytes_per_pixel()),
+        copies + coefficients,
+        color.has_alpha(),
+    ))?;
+    Ok((DynamicImage::from_decoder(decoder)?, held))
+}
+
+/// WMDE: memory for a zune decode, told from the header the `image` crate reads of every format
+/// sent to zune. zune holds the picture in planes and flattens it into another buffer, and a
+/// colour conversion makes a third copy. A header that does not read reserves nothing: the
+/// decode then fails or not on its own.
+fn zune_reservation(path: &Path) -> Result<Option<budget::Reservation>, LoadError> {
+    let decoder = image::ImageReader::open(path)
+        .and_then(image::ImageReader::with_guessed_format)
+        .ok()
+        .and_then(|mut reader| {
+            reader.no_limits();
+            reader.into_decoder().ok()
+        });
+    let Some(decoder) = decoder else {
+        return Ok(None);
+    };
+    let (width, height) = decoder.dimensions();
+    let color = decoder.color_type();
+    budget::reserve(budget::peak(
+        width,
+        height,
+        u64::from(color.bytes_per_pixel()),
+        3,
+        color.has_alpha(),
+    ))
+    .map(Some)
 }
 
 /// WMDE: whether `path` names a drawing, plain or gzip-compressed. SVG is text, and neither kind
@@ -289,15 +414,21 @@ pub(crate) fn ftyp_brands(head: &[u8]) -> impl Iterator<Item = &[u8]> {
 #[allow(clippy::cast_possible_truncation)]
 fn load_jpeg_full(path: &Path) -> Result<LoadedImage, LoadError> {
     let jpeg_data = fs::read(path)?;
-    Ok(loaded_image(path, decode_jpeg(&jpeg_data)?))
+    // WMDE: the memory stays held until the picture is turned and its texture made.
+    let orientation = exif_orientation(path);
+    let (image, _held) = decode_jpeg(&jpeg_data, turn_copies(orientation))?;
+    Ok(turned(path, image, orientation))
 }
 
 /// WMDE: a whole JPEG in memory through turbojpeg, split from `load_jpeg_full` for the preview
-/// inside a RAW file.
+/// inside a RAW file, and the memory held for it. `copies` as for `decode_within_budget`.
 // JPEG header dimensions are far below u32::MAX, so the usize -> u32 casts
 // cannot truncate.
 #[allow(clippy::cast_possible_truncation)]
-fn decode_jpeg(jpeg_data: &[u8]) -> Result<DynamicImage, LoadError> {
+fn decode_jpeg(
+    jpeg_data: &[u8],
+    copies: u64,
+) -> Result<(DynamicImage, budget::Reservation), LoadError> {
     let mut decompressor = Decompressor::new()
         .map_err(|e| LoadError::UnsupportedFormat(format!("TurboJPEG init failed: {e}")))?;
 
@@ -316,6 +447,16 @@ fn decode_jpeg(jpeg_data: &[u8]) -> Result<DynamicImage, LoadError> {
     } else {
         (PixelFormat::RGB, 3)
     };
+    // WMDE: refused from the header when the pixels would not fit. A progressive JPEG keeps
+    // the coefficients of the whole picture, two bytes a sample, besides.
+    let coefficients = if header.is_progressive { 2 } else { 0 };
+    let held = budget::reserve(budget::peak(
+        width as u32,
+        height as u32,
+        channels as u64,
+        copies + coefficients,
+        false,
+    ))?;
     let mut pixels = vec![0u8; channels * width * height];
 
     let mut output = Image {
@@ -331,11 +472,12 @@ fn decode_jpeg(jpeg_data: &[u8]) -> Result<DynamicImage, LoadError> {
         .map_err(|e| LoadError::UnsupportedFormat(format!("JPEG decode error: {e}")))?;
 
     let (width, height) = (width as u32, height as u32);
-    Ok(if grey {
+    let image = if grey {
         DynamicImage::ImageLuma8(buffer(width, height, pixels)?)
     } else {
         DynamicImage::ImageRgb8(buffer(width, height, pixels)?)
-    })
+    };
+    Ok((image, held))
 }
 
 /// WMDE: a camera RAW file, through the largest preview inside it that decodes. A 12-bit or a
@@ -343,19 +485,30 @@ fn decode_jpeg(jpeg_data: &[u8]) -> Result<DynamicImage, LoadError> {
 fn load_raw(path: &Path) -> Result<LoadedImage, LoadError> {
     let bytes = fs::read(path)?;
     let previews = raw::previews(&bytes);
-    let image = previews
+    let orientation = raw::orientation(&bytes, &previews);
+    // A preview too large for memory is the answer: a smaller one would pass for the photograph.
+    let (image, _held) = previews
         .iter()
-        .find_map(|preview| decode_preview(preview.data))
-        .ok_or(LoadError::NoPreview)?;
-    Ok(turned(path, image, raw::orientation(&bytes, &previews)))
+        .map(|preview| decode_preview(preview.data, turn_copies(orientation)))
+        .find(|decoded| matches!(decoded, Ok(_) | Err(LoadError::TooLarge { .. })))
+        .unwrap_or(Err(LoadError::NoPreview))?;
+    Ok(turned(path, image, orientation))
 }
 
-/// A preview JPEG: turbojpeg, which stops at a warning, and the `image` crate's decoder, which
-/// reads through one, as the JPEG path above falls back to it.
-fn decode_preview(data: &[u8]) -> Option<DynamicImage> {
-    decode_jpeg(data)
-        .or_else(|_| image::load_from_memory_with_format(data, image::ImageFormat::Jpeg))
-        .ok()
+/// A preview JPEG: turbojpeg, which stops at a warning, and else the `image` crate's decoder,
+/// which reads through one, as the JPEG path above falls back to it. One too large for memory
+/// is not tried again.
+fn decode_preview(
+    data: &[u8],
+    copies: u64,
+) -> Result<(DynamicImage, budget::Reservation), LoadError> {
+    match decode_jpeg(data, copies) {
+        Err(err) if !matches!(err, LoadError::TooLarge { .. }) => decode_within_budget(
+            image::ImageReader::with_format(Cursor::new(data), image::ImageFormat::Jpeg),
+            copies,
+        ),
+        decoded => decoded,
+    }
 }
 
 /// WMDE: the thumbnail of a camera RAW file: the smallest preview that still covers it, often
@@ -371,14 +524,8 @@ fn raw_thumbnail(path: &Path, max_size: u32) -> Result<LoadedImage, LoadError> {
         .chain(&previews)
         .find_map(|preview| {
             let pixels = decode_jpeg_data_scaled(preview.data, max_size).or_else(|_| {
-                let image = decode_preview(preview.data).ok_or(LoadError::NoPreview)?;
-                let rgba = image.to_rgba8();
-                let (width, height) = rgba.dimensions();
-                if width <= max_size && height <= max_size {
-                    Ok((width, height, rgba.into_raw()))
-                } else {
-                    fast_resize_rgba(rgba.as_raw(), width, height, max_size)
-                }
+                let (image, _held) = decode_preview(preview.data, 1)?;
+                thumbnail_pixels(image, max_size)
             });
             pixels.ok()
         })
@@ -425,6 +572,7 @@ pub(crate) fn register_jpeg_xl() {
 // u32::MAX, so the usize -> u32 casts cannot truncate.
 #[allow(clippy::cast_possible_truncation)]
 fn load_with_zune(path: &Path) -> Result<LoadedImage, LoadError> {
+    let _held = zune_reservation(path)?;
     let img = ZuneImage::open(path).map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
     Ok(loaded_image(path, from_zune(img)?))
 }
@@ -508,8 +656,10 @@ fn from_zune(mut img: ZuneImage) -> Result<DynamicImage, LoadError> {
 }
 
 fn load_with_image(path: &Path) -> Result<LoadedImage, LoadError> {
-    let img = open_by_content(path)?;
-    Ok(loaded_image(path, img))
+    // WMDE: the memory stays held until the picture is turned and its texture made.
+    let orientation = exif_orientation(path);
+    let (img, _held) = open_by_content(path, turn_copies(orientation))?;
+    Ok(turned(path, img, orientation))
 }
 
 /// Decode the image at `path` and downscale it to fit `max_size` on its longest
@@ -546,8 +696,7 @@ fn load_thumbnail_sync(path: &Path, max_size: u32) -> Result<LoadedImage, LoadEr
         if loaded.width <= max_size && loaded.height <= max_size {
             return Ok(loaded);
         }
-        let pixels = loaded.image.to_rgba8().into_raw();
-        let (w, h, resized) = fast_resize_rgba(&pixels, loaded.width, loaded.height, max_size)?;
+        let (w, h, resized) = thumbnail_pixels(loaded.image, max_size)?;
         let handle = Handle::from_rgba(w, h, resized.clone());
         let rgba_image =
             RgbaImage::from_raw(w, h, resized).expect("pixel buffer matches dimensions");
@@ -775,6 +924,9 @@ fn decode_jpeg_data_scaled(
     let scaled = header.scaled(scaling);
     let width = scaled.width;
     let height = scaled.height;
+    // WMDE: DCT scaling stops at an eighth a side, so the scaled picture is bounded by the
+    // file's size and not by the thumbnail's. Held for it and the resizer's copy of it.
+    let _held = budget::reserve(budget::peak(width as u32, height as u32, 4, 2, false))?;
 
     // Pre-allocate output buffer for RGBA (4 bytes per pixel)
     let mut pixels = vec![0u8; 4 * width * height];
@@ -838,47 +990,23 @@ fn calculate_jpeg_scale(width: u32, height: u32, target: u32) -> ScalingFactor {
 }
 
 /// Decode and resize using zune, returns (width, height, `rgba_pixels`)
-// Image dimensions originate from a decoded image header and are far below
-// u32::MAX, so the usize -> u32 casts cannot truncate.
-#[allow(clippy::cast_possible_truncation)]
+// WMDE: through the full view's conversion, which keeps the picture's own depth and layout, and
+// the in-place downscale. It turned every picture into RGBA planes at full size first and
+// flattened them into yet another buffer, more than the reservation counts.
 fn decode_and_resize_zune(path: &Path, max_size: u32) -> Result<(u32, u32, Vec<u8>), LoadError> {
-    let mut img = ZuneImage::open(path).map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
-
-    img.convert_color(ColorSpace::RGBA)
-        .map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
-
-    let (width, height) = img.dimensions();
-
-    let pixels = img
-        .flatten_to_u8()
-        .into_iter()
-        .next()
-        .ok_or_else(|| LoadError::UnsupportedFormat("No pixel data".into()))?;
-
-    // If already small enough, return directly
-    if width <= max_size as usize && height <= max_size as usize {
-        return Ok((width as u32, height as u32, pixels));
-    }
-
-    fast_resize_rgba(&pixels, width as u32, height as u32, max_size)
+    let _held = zune_reservation(path)?;
+    let img = ZuneImage::open(path).map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
+    thumbnail_pixels(from_zune(img)?, max_size)
 }
 
 /// Decode and resize using image crate, returns (width, height, `rgba_pixels`)
 fn decode_and_resize_image(path: &Path, max_size: u32) -> Result<(u32, u32, Vec<u8>), LoadError> {
-    let img = open_by_content(path)?;
-    let rgba = img.to_rgba8();
-    let (width, height) = rgba.dimensions();
-
-    // If already small enough, return directly
-    if width <= max_size && height <= max_size {
-        return Ok((width, height, rgba.into_raw()));
-    }
-
-    let pixels = rgba.into_raw();
-    fast_resize_rgba(&pixels, width, height, max_size)
+    let (image, _held) = open_by_content(path, 1)?;
+    thumbnail_pixels(image, max_size)
 }
 
-/// Fast RGBA image resize using SIMD-optimized `fast_image_resize` crate
+/// The size `width` x `height` takes fitted within `max` on its longer side, never below one
+/// pixel.
 // Source dimensions are positive image sizes and `ratio` is in (0, 1], so the
 // scaled product is non-negative and within u32 range after rounding; the f32
 // round-trip is exact for realistic image sizes.
@@ -887,27 +1015,28 @@ fn decode_and_resize_image(path: &Path, max_size: u32) -> Result<(u32, u32, Vec<
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
 )]
+fn fit_within(width: u32, height: u32, max: u32) -> (u32, u32) {
+    let (fitted_width, fitted_height) = if width > height {
+        let ratio = max as f32 / width as f32;
+        (max, (height as f32 * ratio).round() as u32)
+    } else {
+        let ratio = max as f32 / height as f32;
+        ((width as f32 * ratio).round() as u32, max)
+    };
+    (fitted_width.max(1), fitted_height.max(1))
+}
+
+/// Fast RGBA image resize using SIMD-optimized `fast_image_resize` crate
 fn fast_resize_rgba(
     pixels: &[u8],
     src_width: u32,
     src_height: u32,
     max_size: u32,
 ) -> Result<(u32, u32, Vec<u8>), LoadError> {
-    // Calculate target dimensions maintaining aspect ratio
-    let (dst_width, dst_height) = if src_width > src_height {
-        let ratio = max_size as f32 / src_width as f32;
-        (max_size, (src_height as f32 * ratio).round() as u32)
-    } else {
-        let ratio = max_size as f32 / src_height as f32;
-        ((src_width as f32 * ratio).round() as u32, max_size)
-    };
+    let (dst_width, dst_height) = fit_within(src_width, src_height, max_size);
 
-    // Ensure dimensions are at least 1
-    let dst_width = dst_width.max(1);
-    let dst_height = dst_height.max(1);
-
-    // Create source image from pixel data
-    let src_image = FirImage::from_vec_u8(src_width, src_height, pixels.to_vec(), PixelType::U8x4)
+    // WMDE: the source is read in place; it was copied into an image of the resizer's own.
+    let src_image = ImageRef::new(src_width, src_height, pixels, PixelType::U8x4)
         .map_err(|e| LoadError::UnsupportedFormat(e.to_string()))?;
 
     let mut dst_image = FirImage::new(dst_width, dst_height, PixelType::U8x4);
@@ -1017,6 +1146,15 @@ fn load_heif(path: &Path) -> Result<LoadedImage, LoadError> {
         (true, false) => RgbChroma::HdrRgbLe,
         (true, true) => RgbChroma::HdrRgbaLe,
     };
+    // WMDE: refused from the handle's size when it would not fit: libheif's plane, the rows
+    // packed out of it and, for a deep picture, the samples stretched from those.
+    let _held = budget::reserve(budget::peak(
+        handle.width(),
+        handle.height(),
+        (if alpha { 4 } else { 3 }) * (if deep { 2 } else { 1 }),
+        if deep { 3 } else { 2 },
+        alpha,
+    ))?;
     let img = lib
         .decode(&handle, HeifColorSpace::Rgb(chroma), None)
         .map_err(|e| LoadError::UnsupportedFormat(format!("HEIF: {e}")))?;
