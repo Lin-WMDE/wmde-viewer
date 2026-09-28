@@ -14,15 +14,17 @@ pub enum WatcherEvent {
     Error(String),
 }
 
-pub fn watch_directory(dir: Option<PathBuf>) -> Subscription<WatcherEvent> {
-    Subscription::run_with(dir, |dir| {
+// WMDE: every directory the album draws on, not one: an album of files given on the command
+// line may span several, and a picture in a directory nobody watched went stale unseen.
+pub fn watch_directories(dirs: Vec<PathBuf>) -> Subscription<WatcherEvent> {
+    Subscription::run_with(dirs, |dirs| {
         cosmic::iced::stream::channel(100, {
-            let dir = dir.clone();
+            let dirs = dirs.clone();
             move |mut output: cosmic::iced::futures::channel::mpsc::Sender<WatcherEvent>| async move {
-                let Some(dir) = dir else {
+                if dirs.is_empty() {
                     std::future::pending::<()>().await;
                     unreachable!()
-                };
+                }
 
                 let (tx, mut rx) = mpsc::channel(100);
 
@@ -42,10 +44,13 @@ pub fn watch_directory(dir: Option<PathBuf>) -> Subscription<WatcherEvent> {
                     }
                 };
 
-                if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
-                    let _ = output.send(WatcherEvent::Error(e.to_string())).await;
-                    std::future::pending::<()>().await;
-                    unreachable!();
+                // A directory that cannot be watched is reported; the others still are.
+                for dir in &dirs {
+                    if let Err(e) = watcher.watch(dir, RecursiveMode::NonRecursive) {
+                        let _ = output
+                            .send(WatcherEvent::Error(format!("{}: {e}", dir.display())))
+                            .await;
+                    }
                 }
 
                 while let Some(result) = rx.recv().await {

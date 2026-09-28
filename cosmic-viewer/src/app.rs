@@ -63,7 +63,7 @@ use viewer_config::{AppTheme, ViewerConfig};
 use viewer_core::{
     CachedImage, ClipboardImage, ImageCache, NavState, get_image_dir, image_mime_type, is_drawing,
     is_supported_image, keeps_depth, load_image, load_thumbnail, nav, raw::raw_mime_type,
-    read_details, save_image, scan_dir,
+    read_details, save_image, scan_dir, sort_files,
 };
 use viewer_toolbar::{ItemPriority, ToolbarItem, ToolbarMode, responsive_toolbar};
 use viewer_tools::{
@@ -144,6 +144,9 @@ pub struct CosmicViewer {
     unsaved_dialog: Option<PendingAction>,
     available_outputs: Vec<String>,
     watcher_rescan_pending: bool,
+    /// WMDE: the files the album was opened with when there were several; `None` for an album
+    /// of a directory. A rescan orders these again rather than listing the directory.
+    chosen_files: Option<Vec<PathBuf>>,
     was_narrow: bool,
     toasts: Toasts<ViewerMessage>,
     /// WMDE: why the picture at this path did not open, shown in place of the picture.
@@ -381,6 +384,13 @@ impl CosmicViewer {
         let sort_mode = self.config.sort_mode;
         let sort_order = self.config.sort_order;
 
+        if let Some(files) = self.chosen_files.clone() {
+            return future(async move {
+                let images = sort_files(files, sort_mode, sort_order).await;
+                Action::App(ViewerMessage::Nav(NavMessage::DirectoryRefreshed(images)))
+            });
+        }
+
         let dir = self.nav.current().map_or_else(
             || self.nav.dir().map(std::path::Path::to_path_buf),
             |current| get_image_dir(current),
@@ -396,7 +406,60 @@ impl CosmicViewer {
         Task::none()
     }
 
+    /// WMDE: what the command line asked for. One path opens as a path does; several paths with
+    /// files among them make an album of those files alone, ordered as the album orders, the
+    /// first given shown. A directory or a missing path among them is left out.
+    fn open_start(&mut self, paths: Vec<PathBuf>) -> Task<Action<ViewerMessage>> {
+        let files = given_files(&paths);
+        if paths.len() < 2 || files.is_empty() {
+            let mut paths = paths.into_iter();
+            let first = paths.next();
+            for other in paths {
+                tracing::warn!("{} is left out: only the first path opens", other.display());
+            }
+            return first.map_or_else(Task::none, |path| self.open_path(path));
+        }
+        for other in paths.iter().filter(|path| !files.contains(path)) {
+            tracing::warn!(
+                "{} is left out of the album of the files given",
+                other.display()
+            );
+        }
+        let first = files[0].clone();
+        let dir = first.parent().map_or_else(PathBuf::new, Path::to_path_buf);
+        self.chosen_files = Some(files.clone());
+        let sort_mode = self.config.sort_mode;
+        let sort_order = self.config.sort_order;
+        future(async move {
+            let images = sort_files(files, sort_mode, sort_order).await;
+            Action::App(ViewerMessage::Nav(NavMessage::ScanComplete(
+                dir,
+                images,
+                Some(first),
+            )))
+        })
+    }
+
+    /// WMDE: the directories the watcher follows: each one a file of the album given on the
+    /// command line lives in, else the album's own.
+    fn watched_dirs(&self) -> Vec<PathBuf> {
+        self.chosen_files.as_ref().map_or_else(
+            || self.nav.dir().map(Path::to_path_buf).into_iter().collect(),
+            |files| {
+                let mut dirs: Vec<PathBuf> = files
+                    .iter()
+                    .filter_map(|file| file.parent().map(Path::to_path_buf))
+                    .collect();
+                dirs.sort();
+                dirs.dedup();
+                dirs
+            },
+        )
+    }
+
     fn open_path(&mut self, path: PathBuf) -> Task<Action<ViewerMessage>> {
+        // WMDE: any path opened from here on is an album of its own directory.
+        self.chosen_files = None;
         if let Some(dir) = get_image_dir(&path) {
             let select = path.is_file().then_some(path);
             let include_hidden = self.config.show_hidden_files;
@@ -434,6 +497,15 @@ impl CosmicViewer {
         {
             task::message(Action::App(ViewerMessage::Nav(NavMessage::ScanComplete(
                 path.parent().unwrap().to_path_buf(),
+                vec![path.clone()],
+                Some(path),
+            ))))
+        } else if !path.exists() {
+            // WMDE: a path that is not there is the picture that did not open, with its reason
+            // in its place, not an empty window with nothing said.
+            let dir = path.parent().map_or_else(PathBuf::new, Path::to_path_buf);
+            task::message(Action::App(ViewerMessage::Nav(NavMessage::ScanComplete(
+                dir,
                 vec![path.clone()],
                 Some(path),
             ))))
@@ -1689,7 +1761,8 @@ impl Application for CosmicViewer {
     const APP_ID: &'static str = "fun.wmde.Viewer";
 
     type Executor = cosmic::executor::Default;
-    type Flags = Option<PathBuf>;
+    // WMDE: every path the command line gave; see viewer_core::args.
+    type Flags = Vec<PathBuf>;
     type Message = ViewerMessage;
 
     fn core(&self) -> &Core {
@@ -1723,7 +1796,15 @@ impl Application for CosmicViewer {
             .last_color
             .map(|c| Color::from_rgba(c[0], c[1], c[2], c[3]));
         let app_themes = vec![fl!("match-desktop"), fl!("dark"), fl!("light")];
-        core.nav_bar_set_toggled(config.show_navbar && flags.as_ref().is_none_or(|p| p.is_dir()));
+        // WMDE: the strip shows for an album of several files, for a directory and for nothing
+        // at all, as `open_start` decides them.
+        let files = given_files(&flags);
+        let album_of_files = flags.len() > 1 && files.len() > 1;
+        let directory = (flags.len() < 2 || files.is_empty())
+            && flags.first().is_some_and(|path| path.is_dir());
+        core.nav_bar_set_toggled(
+            config.show_navbar && (flags.is_empty() || album_of_files || directory),
+        );
         let mut viewer = Self {
             core,
             cur_scroll: None,
@@ -1805,6 +1886,7 @@ impl Application for CosmicViewer {
             unsaved_dialog: None,
             available_outputs: Vec::new(),
             watcher_rescan_pending: false,
+            chosen_files: None,
             was_narrow: false,
             toasts: Toasts::new(ViewerMessage::CloseToast),
             load_error: None,
@@ -1830,9 +1912,7 @@ impl Application for CosmicViewer {
                 ]),
         };
 
-        if let Some(path) = flags {
-            tasks.push(viewer.open_path(path));
-        }
+        tasks.push(viewer.open_start(flags));
         let theme = viewer.config.app_theme.theme();
 
         tasks.push(cosmic::command::set_theme(theme));
@@ -2353,7 +2433,14 @@ impl Application for CosmicViewer {
                 // gone); `that_detached` would return before it and report nothing. A plain
                 // thread, not tokio's blocking pool: the runtime waits for that pool on exit,
                 // and a file manager kept in the foreground would keep the viewer alive.
-                if let Some(dir) = self.nav.dir().map(Path::to_path_buf) {
+                // WMDE: the current picture's directory, which in an album of files given is
+                // not always the album's.
+                let dir = self
+                    .nav
+                    .current()
+                    .and_then(|current| current.parent().map(Path::to_path_buf))
+                    .or_else(|| self.nav.dir().map(Path::to_path_buf));
+                if let Some(dir) = dir {
                     let (sender, receiver) = tokio::sync::oneshot::channel();
                     let opener_dir = dir.clone();
                     std::thread::spawn(move || {
@@ -2429,14 +2516,20 @@ impl Application for CosmicViewer {
                     self.unsaved_dialog = None;
                     return complaint;
                 }
-                // WMDE: see save_in_place.
-                if self.nav.current() == Some(&path) {
+                // WMDE: see save_in_place. A picture saved over itself is read again here, as
+                // there, rather than left to the watcher, which is not the only one to say so.
+                let reload = if self.nav.current() == Some(&path) {
                     self.details_stamp = self.details_stamp.wrapping_add(1);
-                }
+                    self.cache.remove_full(&path);
+                    self.cache.remove_thumbnail(&path);
+                    self.load_full_image(path)
+                } else {
+                    Task::none()
+                };
 
                 self.viewport.cancel_tool();
                 self.viewport.revert_all();
-                return self.resolve_pending();
+                return Task::batch([reload, self.resolve_pending()]);
             }
             ViewerMessage::Quit => {
                 // WMDE: a wallpaper still being set is finished first: the thread would die
@@ -2594,10 +2687,12 @@ impl Application for CosmicViewer {
                 self.context_menu_position = None;
                 // WMDE: unsaved edits are settled before the file goes, not after: Cancel keeps
                 // the file, and Discard replays the deletion against the album as it is then.
-                if self.nav.current().is_some() && self.guard_unsaved(ViewerMessage::MoveToTrash) {
+                // WMDE: a path that is not there has nothing to trash; it stays, with its reason.
+                let present = self.nav.current().is_some_and(|path| path.exists());
+                if present && self.guard_unsaved(ViewerMessage::MoveToTrash) {
                     return Task::none();
                 }
-                if let Some(path) = self.nav.current().cloned() {
+                if let Some(path) = self.nav.current().filter(|_| present).cloned() {
                     // WMDE: the picture leaves the album at once and the one after it takes its
                     // place, the one before only when the last is deleted, as in wmde-photos:
                     // throwing out the bad shots of a series moves forward, not back to one
@@ -3231,10 +3326,25 @@ impl Application for CosmicViewer {
                     }
                 }
                 NavMessage::DirectoryRefreshed(images) => {
-                    let selected = self.nav.current().cloned();
+                    let old_idx = self.nav.index();
+                    // WMDE: in an album of files given, the picture shown can be gone from the
+                    // list; its place goes to its neighbour rather than the album shrinking to
+                    // the one missing file, as `set_images` does for a picture the scan left out.
+                    let selected = self
+                        .nav
+                        .current()
+                        .cloned()
+                        .filter(|path| self.chosen_files.is_none() || images.contains(path));
                     let dir = self.nav.dir().map(std::path::Path::to_path_buf);
                     if let Some(dir) = dir {
                         self.nav.set_images(dir, images, selected.as_deref());
+                        if self.chosen_files.is_some()
+                            && self.nav.index().is_none()
+                            && !self.nav.is_empty()
+                            && let Some(idx) = old_idx
+                        {
+                            self.nav.select(idx.min(self.nav.images().len() - 1));
+                        }
                         self.rebuild_nav_handles();
 
                         if !self.nav.is_empty() {
@@ -4548,8 +4658,7 @@ impl Application for CosmicViewer {
 
     fn subscription(&self) -> Subscription<Self::Message> {
         let watcher_sub =
-            crate::watcher::watch_directory(self.nav.dir().map(std::path::Path::to_path_buf))
-                .map(ViewerMessage::WatcherEvent);
+            crate::watcher::watch_directories(self.watched_dirs()).map(ViewerMessage::WatcherEvent);
 
         // WMDE: the details drawer reads the file it describes off the drawing thread, once for
         // each picture and again whenever the file changes. A plain thread, as for
@@ -4602,6 +4711,18 @@ fn detail_row<'a>(label: String, value: String) -> Element<'a, ViewerMessage> {
         .push(text::body(value))
         .spacing(2)
         .into()
+}
+
+/// WMDE: the files among `paths`, each once, the first spelling of it kept: the same file given
+/// twice, or under two names, is one picture of the album.
+fn given_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    paths
+        .iter()
+        .filter(|path| path.is_file())
+        .filter(|path| seen.insert(std::fs::canonicalize(path).unwrap_or_else(|_| (*path).clone())))
+        .cloned()
+        .collect()
 }
 
 fn friendly_type_name(ext: &str) -> String {

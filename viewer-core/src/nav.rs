@@ -201,6 +201,27 @@ fn scan_dir_sync(
         })
         .collect();
 
+    sort_images(&mut images, sort_mode, sort_order);
+    images
+}
+
+/// WMDE: the album of the files given, as `scan_dir` orders a directory: those that are still
+/// files, whatever their name, since each was asked for by name.
+pub async fn sort_files(
+    files: Vec<PathBuf>,
+    sort_mode: SortMode,
+    sort_order: SortOrder,
+) -> Vec<PathBuf> {
+    spawn_blocking(move || {
+        let mut images: Vec<PathBuf> = files.into_iter().filter(|path| path.is_file()).collect();
+        sort_images(&mut images, sort_mode, sort_order);
+        images
+    })
+    .await
+    .unwrap_or_default()
+}
+
+fn sort_images(images: &mut [PathBuf], sort_mode: SortMode, sort_order: SortOrder) {
     images.sort_by(|a, b| {
         let ordering = match sort_mode {
             SortMode::Name => {
@@ -229,8 +250,6 @@ fn scan_dir_sync(
             SortOrder::Descending => ordering.reverse(),
         }
     });
-
-    images
 }
 
 #[must_use]

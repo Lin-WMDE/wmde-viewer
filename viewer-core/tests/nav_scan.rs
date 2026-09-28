@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use viewer_config::{SortMode, SortOrder};
-use viewer_core::{NavState, is_supported_image, scan_dir};
+use viewer_core::{NavState, is_supported_image, scan_dir, sort_files};
 
 fn test_images_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../test_images"))
@@ -243,4 +243,28 @@ fn a_deleted_picture_leaves_the_album_and_the_next_one_takes_its_place() {
     assert!(nav.is_empty());
     assert_eq!(nav.index(), None);
     assert_eq!(nav.forget_current(), None);
+}
+
+// WMDE: several files on the command line are an album of their own: ordered as a directory is,
+// whatever their names, and without those no longer there.
+#[tokio::test]
+async fn files_given_are_ordered_as_the_album_orders() {
+    let dir = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let b = dir.path().join("b10.jpg");
+    let a = other.path().join("b2.png");
+    let odd = dir.path().join("a1.scan");
+    for path in [&b, &a, &odd] {
+        fs::write(path, b"x").unwrap();
+    }
+    let gone = dir.path().join("gone.jpg");
+    let given = vec![b.clone(), gone, a.clone(), odd.clone()];
+    assert_eq!(
+        sort_files(given.clone(), SortMode::Name, SortOrder::Ascending).await,
+        [odd.clone(), a.clone(), b.clone()]
+    );
+    assert_eq!(
+        sort_files(given, SortMode::Name, SortOrder::Descending).await,
+        [b, a, odd]
+    );
 }

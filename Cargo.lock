@@ -6139,6 +6139,7 @@ dependencies = [
  "tokio",
  "tracing",
  "turbojpeg",
+ "url",
  "viewer-config",
  "wmde-bg-config",
  "zune-image",

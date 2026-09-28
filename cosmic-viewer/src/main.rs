@@ -16,11 +16,7 @@ use cosmic::{
     iced::Limits,
     widget::icon,
 };
-use std::{
-    env::{args, var},
-    path::PathBuf,
-    sync::{Mutex, OnceLock},
-};
+use std::sync::{Mutex, OnceLock};
 
 use crate::icon_cache::IconCache;
 
@@ -43,18 +39,8 @@ fn main() -> cosmic::iced::Result {
         .exit_on_close(false)
         .size_limits(Limits::NONE.min_width(360.0).min_height(300.0));
 
-    // Get the image if opened from the file manager or cli
-    let mut optional_image = args().nth(1).map(PathBuf::from);
+    // WMDE: every path given, or the pictures directory; see viewer_core::args.
+    let paths = viewer_core::args::start_paths(std::env::args_os().skip(1));
 
-    // Make /home/$USER/Pictures the default directory to open to.
-    if optional_image.is_none() {
-        optional_image = Some(
-            var("HOME")
-                .map(PathBuf::from)
-                .expect("/home/$USER should exist")
-                .join("Pictures"),
-        );
-    }
-
-    run::<CosmicViewer>(settings, optional_image)
+    run::<CosmicViewer>(settings, paths)
 }
