@@ -290,7 +290,8 @@ async fn a_jpeg_named_avif_opens_as_a_jpeg() {
 }
 
 // WMDE: TIFF is the container of most camera RAW formats, and their first image is a small
-// preview; under a RAW name it is refused rather than shown as the photograph.
+// preview; under a RAW name it is refused rather than shown as the photograph. A RAW is shown
+// through a JPEG preview inside it (tests/raw.rs), and this one has none.
 #[tokio::test]
 async fn tiff_content_under_a_raw_name_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -300,8 +301,18 @@ async fn tiff_content_under_a_raw_name_is_refused() {
         .unwrap();
     let raw = dir.path().join("DSC_0001.nef");
     std::fs::copy(&tiff, &raw).unwrap();
-    assert!(load_image(raw.clone()).await.is_err());
+    assert!(matches!(
+        load_image(raw.clone()).await,
+        Err(viewer_core::LoadError::NoPreview)
+    ));
     assert!(load_thumbnail(raw, 32).await.is_err());
+    // A RAW kind not claimed is refused as TIFF content under another name.
+    let other = dir.path().join("IMG_0001.3fr");
+    std::fs::copy(&tiff, &other).unwrap();
+    assert!(matches!(
+        load_image(other).await,
+        Err(viewer_core::LoadError::UnsupportedFormat(_))
+    ));
 
     let bare = dir.path().join("scan");
     std::fs::copy(&tiff, &bare).unwrap();

@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use crate::raw::raw_mime_type;
 use cosmic::iced::clipboard::mime::AsMimeTypes;
 
 #[derive(Debug, Clone)]
@@ -27,7 +28,7 @@ impl AsMimeTypes for ClipboardImage {
 #[must_use]
 pub fn image_mime_type(ext: &str) -> Option<&'static str> {
     match ext.to_lowercase().as_str() {
-        "jpg" | "jpeg" => Some("image/jpeg"),
+        "jpg" | "jpeg" | "jpe" => Some("image/jpeg"),
         "png" => Some("image/png"),
         "gif" => Some("image/gif"),
         "webp" => Some("image/webp"),
@@ -36,6 +37,8 @@ pub fn image_mime_type(ext: &str) -> Option<&'static str> {
         "avif" => Some("image/avif"),
         "ico" => Some("image/x-ico"),
         "svg" => Some("image/svg+xml"),
-        _ => None,
+        // WMDE: the types the fork opens on top of upstream's.
+        "svgz" => Some("image/svg+xml-compressed"),
+        other => raw_mime_type(other),
     }
 }

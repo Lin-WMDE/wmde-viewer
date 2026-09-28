@@ -6131,6 +6131,7 @@ dependencies = [
  "libcosmic",
  "libheif-rs",
  "lru",
+ "memchr",
  "rayon",
  "resvg 0.47.0",
  "tempfile",

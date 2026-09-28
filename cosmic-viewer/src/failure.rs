@@ -31,6 +31,7 @@ pub fn load_reason(err: &LoadError) -> String {
         }
         LoadError::Io(err) | LoadError::Decode(image::ImageError::IoError(err)) => io_reason(err),
         LoadError::Decode(_) | LoadError::UnsupportedFormat(_) => fl!("error-reason-unreadable"),
+        LoadError::NoPreview => fl!("error-reason-no-preview"),
         LoadError::Cancelled => fl!("error-reason-system"),
     }
 }

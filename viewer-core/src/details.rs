@@ -5,7 +5,10 @@
 // interface language, since the EXIF crate's own formatting is English ("1/250 s", "50 deg
 // 27 min", "fired, return light not detected").
 
-use crate::loader::{HEIF_BRANDS, exif_dpi, ftyp_brands};
+use crate::{
+    loader::{HEIF_BRANDS, exif_dpi, ftyp_brands, is_drawing},
+    raw,
+};
 use exif::{In, Tag, Value};
 use image::ImageFormat;
 use resvg::usvg;
@@ -101,12 +104,17 @@ pub enum FlashMode {
 #[must_use]
 pub fn read_details(path: &Path) -> Details {
     let meta = fs::metadata(path).ok();
-    let exif = File::open(path).ok().and_then(|file| {
-        exif::Reader::new()
-            .read_from_container(&mut BufReader::new(file))
-            .ok()
-    });
     let format = content_format(path);
+    // WMDE: a RAW file's EXIF may sit where the reader does not look; see `raw.rs`.
+    let exif = if format == Some("RAW") {
+        fs::read(path).ok().and_then(|bytes| raw::exif(&bytes))
+    } else {
+        File::open(path).ok().and_then(|file| {
+            exif::Reader::new()
+                .read_from_container(&mut BufReader::new(file))
+                .ok()
+        })
+    };
     Details {
         size: meta.as_ref().map(fs::Metadata::len),
         created: meta.as_ref().and_then(|meta| meta.created().ok()),
@@ -289,8 +297,8 @@ fn coordinate(exif: &exif::Exif, tag: Tag, reference: Tag, negative: u8) -> Opti
 }
 
 /// The format of the content, told the way the loader tells it: HEIF and AVIF by their `ftyp`
-/// box, JPEG XL by its signature, the rest by the `image` crate. SVG is text and goes by its
-/// name.
+/// box, a camera RAW by its name over a TIFF or unknown content, JPEG XL by its signature, the
+/// rest by the `image` crate. SVG, plain or compressed, goes by its name.
 #[must_use]
 pub fn content_format(path: &Path) -> Option<&'static str> {
     let mut head = Vec::with_capacity(64);
@@ -307,15 +315,16 @@ pub fn content_format(path: &Path) -> Option<&'static str> {
     if brands.iter().any(|brand| HEIF_BRANDS.contains(brand)) {
         return Some("HEIF");
     }
+    if raw::reads_as_raw(path, &head) {
+        return Some("RAW");
+    }
     if head.starts_with(&[0xFF, 0x0A]) || head.starts_with(b"\0\0\0\x0CJXL \r\n\x87\n") {
         return Some("JPEG XL");
     }
     if let Ok(format) = image::guess_format(&head) {
         return format_name(format);
     }
-    path.extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
-        .then_some("SVG")
+    is_drawing(path).then_some("SVG")
 }
 
 const fn format_name(format: ImageFormat) -> Option<&'static str> {

@@ -170,6 +170,7 @@ error-reason-permission = немає доступу
 error-reason-read-only = файлова система лише для читання
 error-reason-no-space = на диску немає місця
 error-reason-unreadable = файл пошкоджено або його формат не підтримується
+error-reason-no-preview = у файлі RAW немає вбудованого зображення для перегляду
 error-reason-unwritable = зображення не можна записати в цьому форматі
 error-reason-depth = його формат втратив би глибину кольору, збережіть як PNG або TIFF
 error-reason-name-taken = файл із такою назвою вже існує

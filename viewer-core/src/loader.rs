@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use crate::raw;
 use cosmic::widget::image::Handle;
 use fast_image_resize::{PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image as FirImage};
 use image::{DynamicImage, ImageBuffer, Pixel, RgbaImage, metadata::Orientation};
@@ -28,6 +29,9 @@ pub enum LoadError {
     Decode(#[from] image::ImageError),
     #[error("Unsupported format: {0}")]
     UnsupportedFormat(String),
+    // WMDE: a camera RAW file is shown through the preview inside it, and this one has none.
+    #[error("no preview inside the RAW file")]
+    NoPreview,
     #[error("Task cancelled")]
     Cancelled,
 }
@@ -82,8 +86,13 @@ fn exif_orientation(path: &Path) -> Option<Orientation> {
 }
 
 /// A full-resolution decode of `path`, turned the way the file asks to be viewed.
-fn loaded_image(path: &Path, mut image: DynamicImage) -> LoadedImage {
-    if let Some(orientation) = exif_orientation(path) {
+fn loaded_image(path: &Path, image: DynamicImage) -> LoadedImage {
+    turned(path, image, exif_orientation(path))
+}
+
+/// A full-resolution decode of `path`, turned by `orientation`.
+fn turned(path: &Path, mut image: DynamicImage, orientation: Option<Orientation>) -> LoadedImage {
+    if let Some(orientation) = orientation {
         image.apply_orientation(orientation);
     }
     let (width, height) = (image.width(), image.height());
@@ -98,9 +107,18 @@ fn loaded_image(path: &Path, mut image: DynamicImage) -> LoadedImage {
 
 /// A thumbnail of `path` from RGBA `pixels`, turned the way the file asks to be viewed.
 fn loaded_thumbnail(path: &Path, width: u32, height: u32, pixels: Vec<u8>) -> LoadedImage {
+    thumbnail_turned(path, (width, height, pixels), exif_orientation(path))
+}
+
+/// A thumbnail of `path` from RGBA pixels, turned by `orientation`.
+fn thumbnail_turned(
+    path: &Path,
+    (width, height, pixels): (u32, u32, Vec<u8>),
+    orientation: Option<Orientation>,
+) -> LoadedImage {
     let rgba = RgbaImage::from_raw(width, height, pixels).expect("pixel buffer matches dimensions");
     let mut image = DynamicImage::ImageRgba8(rgba);
-    if let Some(orientation) = exif_orientation(path) {
+    if let Some(orientation) = orientation {
         image.apply_orientation(orientation);
     }
     let (width, height) = (image.width(), image.height());
@@ -137,15 +155,19 @@ fn load_image_sync(path: &Path) -> Result<LoadedImage, LoadError> {
         .map(str::to_lowercase)
         .unwrap_or_default();
 
-    if extension == "svg" {
+    if is_drawing(path) {
         return load_svg_at(path, MAX_TEX);
     }
-    if is_heif_container(path)? {
+    let head = file_head(path)?;
+    if is_heif(&head) {
         return load_heif(path);
+    }
+    if raw::reads_as_raw(path, &head) {
+        return load_raw(path);
     }
 
     // Use turbojpeg for JPEGs (faster than zune/image crate)
-    if matches!(extension.as_str(), "jpg" | "jpeg")
+    if matches!(extension.as_str(), "jpg" | "jpeg" | "jpe")
         && let Ok(img) = load_jpeg_full(path)
     {
         return Ok(img);
@@ -175,10 +197,7 @@ fn load_image_sync(path: &Path) -> Result<LoadedImage, LoadError> {
 ///
 /// Returns [`LoadError`] if the file cannot be read or decoded.
 pub fn load_for_wallpaper(path: &Path, max: u32) -> Result<DynamicImage, LoadError> {
-    let is_svg = path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"));
-    let image = if is_svg {
+    let image = if is_drawing(path) {
         load_svg_at(path, max)?.image
     } else {
         load_image_sync(path)?.image
@@ -198,6 +217,7 @@ fn open_by_content(path: &Path) -> Result<DynamicImage, LoadError> {
     let reader = image::ImageReader::open(path)?.with_guessed_format()?;
     // TIFF is also the container of most camera RAW formats (NEF, DNG, ARW and others), whose
     // first image is a small preview; decoding it would pass the preview off as the photograph.
+    // The RAW names claimed went to `load_raw` before this; what comes here is one that is not.
     let named_tiff = path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -210,15 +230,29 @@ fn open_by_content(path: &Path) -> Result<DynamicImage, LoadError> {
     Ok(reader.decode()?)
 }
 
+/// WMDE: whether `path` names a drawing, plain or gzip-compressed. SVG is text, and neither kind
+/// is told by content; usvg unpacks the compressed one itself.
+#[must_use]
+pub fn is_drawing(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg") || ext.eq_ignore_ascii_case("svgz"))
+}
+
+/// WMDE: the start of the file, which tells HEIF and a RAW container apart from the rest.
+fn file_head(path: &Path) -> Result<Vec<u8>, LoadError> {
+    let mut head = Vec::with_capacity(64);
+    File::open(path)?.take(64).read_to_end(&mut head)?;
+    Ok(head)
+}
+
 // WMDE: HEIF and AVIF are told by their `ftyp` box, not by the name, so an AVIF served behind a
 // `.jpg` link or a HEIC saved without an extension still reaches libheif, and a JPEG named
 // `.heic` does not. AVIF goes to libheif at all because the `image` crate's `avif` feature is
 // the ravif encoder and decodes nothing; libheif reads AVIF with its irot/imir transforms and
 // grids.
-fn is_heif_container(path: &Path) -> Result<bool, LoadError> {
-    let mut head = Vec::with_capacity(64);
-    File::open(path)?.take(64).read_to_end(&mut head)?;
-    Ok(ftyp_brands(&head).any(|brand| HEIF_BRANDS.contains(&brand)))
+fn is_heif(head: &[u8]) -> bool {
+    ftyp_brands(head).any(|brand| HEIF_BRANDS.contains(&brand))
 }
 
 /// The `ftyp` brands libheif reads.
@@ -254,15 +288,21 @@ pub(crate) fn ftyp_brands(head: &[u8]) -> impl Iterator<Item = &[u8]> {
 // cannot truncate.
 #[allow(clippy::cast_possible_truncation)]
 fn load_jpeg_full(path: &Path) -> Result<LoadedImage, LoadError> {
-    let mut file = File::open(path)?;
-    let mut jpeg_data = Vec::new();
-    file.read_to_end(&mut jpeg_data)?;
+    let jpeg_data = fs::read(path)?;
+    Ok(loaded_image(path, decode_jpeg(&jpeg_data)?))
+}
 
+/// WMDE: a whole JPEG in memory through turbojpeg, split from `load_jpeg_full` for the preview
+/// inside a RAW file.
+// JPEG header dimensions are far below u32::MAX, so the usize -> u32 casts
+// cannot truncate.
+#[allow(clippy::cast_possible_truncation)]
+fn decode_jpeg(jpeg_data: &[u8]) -> Result<DynamicImage, LoadError> {
     let mut decompressor = Decompressor::new()
         .map_err(|e| LoadError::UnsupportedFormat(format!("TurboJPEG init failed: {e}")))?;
 
     let header = decompressor
-        .read_header(&jpeg_data)
+        .read_header(jpeg_data)
         .map_err(|e| LoadError::UnsupportedFormat(format!("JPEG header error: {e}")))?;
 
     let width = header.width;
@@ -287,16 +327,67 @@ fn load_jpeg_full(path: &Path) -> Result<LoadedImage, LoadError> {
     };
 
     decompressor
-        .decompress(&jpeg_data, output.as_deref_mut())
+        .decompress(jpeg_data, output.as_deref_mut())
         .map_err(|e| LoadError::UnsupportedFormat(format!("JPEG decode error: {e}")))?;
 
     let (width, height) = (width as u32, height as u32);
-    let image = if grey {
+    Ok(if grey {
         DynamicImage::ImageLuma8(buffer(width, height, pixels)?)
     } else {
         DynamicImage::ImageRgb8(buffer(width, height, pixels)?)
-    };
-    Ok(loaded_image(path, image))
+    })
+}
+
+/// WMDE: a camera RAW file, through the largest preview inside it that decodes. A 12-bit or a
+/// damaged one gives way to the next; see `raw.rs`.
+fn load_raw(path: &Path) -> Result<LoadedImage, LoadError> {
+    let bytes = fs::read(path)?;
+    let previews = raw::previews(&bytes);
+    let image = previews
+        .iter()
+        .find_map(|preview| decode_preview(preview.data))
+        .ok_or(LoadError::NoPreview)?;
+    Ok(turned(path, image, raw::orientation(&bytes, &previews)))
+}
+
+/// A preview JPEG: turbojpeg, which stops at a warning, and the `image` crate's decoder, which
+/// reads through one, as the JPEG path above falls back to it.
+fn decode_preview(data: &[u8]) -> Option<DynamicImage> {
+    decode_jpeg(data)
+        .or_else(|_| image::load_from_memory_with_format(data, image::ImageFormat::Jpeg))
+        .ok()
+}
+
+/// WMDE: the thumbnail of a camera RAW file: the smallest preview that still covers it, often
+/// one the camera wrote for the purpose, else the largest.
+fn raw_thumbnail(path: &Path, max_size: u32) -> Result<LoadedImage, LoadError> {
+    let bytes = fs::read(path)?;
+    let previews = raw::previews(&bytes);
+    let covering = previews
+        .iter()
+        .rev()
+        .filter(|preview| preview.width.max(preview.height) >= max_size);
+    let pixels = covering
+        .chain(&previews)
+        .find_map(|preview| {
+            let pixels = decode_jpeg_data_scaled(preview.data, max_size).or_else(|_| {
+                let image = decode_preview(preview.data).ok_or(LoadError::NoPreview)?;
+                let rgba = image.to_rgba8();
+                let (width, height) = rgba.dimensions();
+                if width <= max_size && height <= max_size {
+                    Ok((width, height, rgba.into_raw()))
+                } else {
+                    fast_resize_rgba(rgba.as_raw(), width, height, max_size)
+                }
+            });
+            pixels.ok()
+        })
+        .ok_or(LoadError::NoPreview)?;
+    Ok(thumbnail_turned(
+        path,
+        pixels,
+        raw::orientation(&bytes, &previews),
+    ))
 }
 
 /// An image buffer over `pixels`, which a decoder produced for `width` x `height`.
@@ -446,10 +537,11 @@ fn load_thumbnail_sync(path: &Path, max_size: u32) -> Result<LoadedImage, LoadEr
         .map(str::to_lowercase)
         .unwrap_or_default();
 
-    if extension == "svg" {
+    if is_drawing(path) {
         return load_svg_at(path, max_size);
     }
-    if is_heif_container(path)? {
+    let head = file_head(path)?;
+    if is_heif(&head) {
         let loaded = load_heif(path)?;
         if loaded.width <= max_size && loaded.height <= max_size {
             return Ok(loaded);
@@ -468,8 +560,12 @@ fn load_thumbnail_sync(path: &Path, max_size: u32) -> Result<LoadedImage, LoadEr
         });
     }
 
+    if raw::reads_as_raw(path, &head) {
+        return raw_thumbnail(path, max_size);
+    }
+
     // 1. For JPEGs, try EXIF thumbnail extraction (no full decode)
-    if matches!(extension.as_str(), "jpg" | "jpeg") {
+    if matches!(extension.as_str(), "jpg" | "jpeg" | "jpe") {
         if let Ok((width, height, pixels)) = extract_exif_thumbnail(path, max_size) {
             return Ok(loaded_thumbnail(path, width, height, pixels));
         }
@@ -647,18 +743,24 @@ fn find_tiff_header_offset(file: &mut File) -> Result<u64, LoadError> {
 // casts cannot truncate.
 #[allow(clippy::cast_possible_truncation)]
 fn decode_jpeg_scaled(path: &Path, max_size: u32) -> Result<(u32, u32, Vec<u8>), LoadError> {
-    // Read the JPEG file
-    let mut file = File::open(path)?;
-    let mut jpeg_data = Vec::new();
-    file.read_to_end(&mut jpeg_data)?;
+    decode_jpeg_data_scaled(&fs::read(path)?, max_size)
+}
 
+/// WMDE: the same for a JPEG in memory, split out for the preview inside a RAW file.
+// JPEG header/scaled dimensions are far below u32::MAX, so the usize -> u32
+// casts cannot truncate.
+#[allow(clippy::cast_possible_truncation)]
+fn decode_jpeg_data_scaled(
+    jpeg_data: &[u8],
+    max_size: u32,
+) -> Result<(u32, u32, Vec<u8>), LoadError> {
     // Create decompressor
     let mut decompressor = Decompressor::new()
         .map_err(|e| LoadError::UnsupportedFormat(format!("TurboJPEG init failed: {e}")))?;
 
     // Read header to get original dimensions
     let header = decompressor
-        .read_header(&jpeg_data)
+        .read_header(jpeg_data)
         .map_err(|e| LoadError::UnsupportedFormat(format!("JPEG header error: {e}")))?;
 
     let (orig_width, orig_height) = (header.width as u32, header.height as u32);
@@ -687,7 +789,7 @@ fn decode_jpeg_scaled(path: &Path, max_size: u32) -> Result<(u32, u32, Vec<u8>),
 
     // Decompress with scaling directly to RGBA
     decompressor
-        .decompress(&jpeg_data, output.as_deref_mut())
+        .decompress(jpeg_data, output.as_deref_mut())
         .map_err(|e| LoadError::UnsupportedFormat(format!("JPEG decode error: {e}")))?;
 
     let width = width as u32;

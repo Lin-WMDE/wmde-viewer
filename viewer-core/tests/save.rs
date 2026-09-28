@@ -49,6 +49,24 @@ fn an_extension_without_an_encoder_is_refused_before_anything_is_written() {
     assert_eq!(names(dir.path()), ["picture.heic"]);
 }
 
+// WMDE: a camera RAW file is shown through its preview, and saving that over the file would
+// throw the sensor data away. No encoder takes a RAW name, so the save is refused.
+#[test]
+fn a_camera_raw_file_is_never_written_over() {
+    let dir = tempfile::tempdir().unwrap();
+    for (extension, _) in viewer_core::raw::RAW_TYPES {
+        let path = dir.path().join(format!("photo.{extension}"));
+        fs::write(&path, ORIGINAL).unwrap();
+        assert!(
+            save_image(&DynamicImage::new_rgb8(8, 8), &path).is_err(),
+            "{extension}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), ORIGINAL, "{extension}");
+        fs::remove_file(&path).unwrap();
+    }
+    assert!(names(dir.path()).is_empty(), "no temporary file is left");
+}
+
 #[test]
 fn a_saved_picture_replaces_the_file_and_keeps_its_mode() {
     let dir = tempfile::tempdir().unwrap();

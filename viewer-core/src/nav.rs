@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use crate::raw::RAW_TYPES;
 use std::{
     cmp::Ordering,
     fs,
@@ -8,10 +9,20 @@ use std::{
 use tokio::task::spawn_blocking;
 use viewer_config::{SortMode, SortOrder};
 
+// WMDE: `jpe` and `svgz` are added, and the camera RAW extensions are `raw::RAW_TYPES`;
+// `extensions` gives both lists.
 pub const EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "ico", "avif", "ppm", "pgm", "pbm",
-    "pnm", "qoi", "ff", "farbfeld", "hdr", "jxl", "svg", "heif", "heic",
+    "jpg", "jpeg", "jpe", "png", "gif", "webp", "bmp", "tiff", "tif", "ico", "avif", "ppm", "pgm",
+    "pbm", "pnm", "qoi", "ff", "farbfeld", "hdr", "jxl", "svg", "svgz", "heif", "heic",
 ];
+
+/// Every extension the album takes, lowercase: `EXTENSIONS` and the camera RAW ones.
+pub fn extensions() -> impl Iterator<Item = &'static str> {
+    EXTENSIONS
+        .iter()
+        .copied()
+        .chain(RAW_TYPES.iter().map(|(extension, _)| *extension))
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct NavState {
@@ -226,7 +237,7 @@ fn scan_dir_sync(
 pub fn is_supported_image(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .is_some_and(|ext| extensions().any(|known| known.eq_ignore_ascii_case(ext)))
 }
 
 fn natural_cmp(a: &str, b: &str) -> Ordering {

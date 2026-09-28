@@ -72,6 +72,20 @@
         <mediatype>image/x-portable-anymap</mediatype>
         <mediatype>image/x-qoi</mediatype>
         <mediatype>image/vnd.radiance</mediatype>
+        <mediatype>image/svg+xml-compressed</mediatype>
+        <mediatype>image/x-adobe-dng</mediatype>
+        <mediatype>image/x-canon-cr2</mediatype>
+        <mediatype>image/x-canon-crw</mediatype>
+        <mediatype>image/x-nikon-nef</mediatype>
+        <mediatype>image/x-nikon-nrw</mediatype>
+        <mediatype>image/x-sony-arw</mediatype>
+        <mediatype>image/x-olympus-orf</mediatype>
+        <mediatype>image/x-panasonic-rw2</mediatype>
+        <mediatype>image/x-pentax-pef</mediatype>
+        <mediatype>image/x-samsung-srw</mediatype>
+        <mediatype>image/x-fuji-raf</mediatype>
+        <mediatype>image/x-minolta-mrw</mediatype>
+        <mediatype>image/x-sigma-x3f</mediatype>
         <binary>wmde-viewer</binary>
     </provides>
 </component>

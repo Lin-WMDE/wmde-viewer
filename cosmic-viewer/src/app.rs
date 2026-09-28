@@ -61,9 +61,9 @@ use std::{
 use viewer_canvas::{CanvasImage, CanvasMessage, ToolKind, ViewportManager};
 use viewer_config::{AppTheme, ViewerConfig};
 use viewer_core::{
-    CachedImage, ClipboardImage, ImageCache, NavState, get_image_dir, image_mime_type,
-    is_supported_image, keeps_depth, load_image, load_thumbnail, read_details, save_image,
-    scan_dir,
+    CachedImage, ClipboardImage, ImageCache, NavState, get_image_dir, image_mime_type, is_drawing,
+    is_supported_image, keeps_depth, load_image, load_thumbnail, nav, raw::raw_mime_type,
+    read_details, save_image, scan_dir,
 };
 use viewer_toolbar::{ItemPriority, ToolbarItem, ToolbarMode, responsive_toolbar};
 use viewer_tools::{
@@ -595,10 +595,7 @@ impl CosmicViewer {
             .map(|(_, details)| details.as_ref());
         let photo = details.and_then(|details| details.exif.as_ref());
         // An SVG is rendered at the texture size; its size is the one the drawing declares.
-        let size = if path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
-        {
+        let size = if is_drawing(path) {
             details.and_then(|d| d.drawing_size)
         } else {
             self.cache.full_size(path)
@@ -2253,45 +2250,35 @@ impl Application for CosmicViewer {
                     return Task::none();
                 }
                 return future(async move {
+                    // WMDE: every extension the album takes, in both cases: the portal
+                    // matches a pattern as written.
+                    let all = nav::extensions().fold(
+                        FileFilter::new(fl!("filter-all")),
+                        |filter, extension| {
+                            filter
+                                .extension(extension)
+                                .extension(extension.to_uppercase())
+                        },
+                    );
+                    let raw = viewer_core::raw::RAW_TYPES.iter().fold(
+                        FileFilter::new("RAW"),
+                        |filter, (extension, _)| {
+                            filter
+                                .extension(*extension)
+                                .extension(extension.to_uppercase())
+                        },
+                    );
                     let dialog = file_chooser::open::Dialog::new()
                         .title(fl!("dialog-open-image"))
-                        .filter(
-                            FileFilter::new(fl!("filter-all"))
-                                .extension("jpg")
-                                .extension("JPG")
-                                .extension("jpeg")
-                                .extension("JPEG")
-                                .extension("png")
-                                .extension("PNG")
-                                .extension("gif")
-                                .extension("GIF")
-                                .extension("webp")
-                                .extension("WEBP")
-                                .extension("bmp")
-                                .extension("BMP")
-                                .extension("tiff")
-                                .extension("TIFF")
-                                .extension("tif")
-                                .extension("TIF")
-                                .extension("ico")
-                                .extension("ICO")
-                                .extension("avif")
-                                .extension("AVIF")
-                                .extension("hdr")
-                                .extension("HDR")
-                                .extension("svg")
-                                .extension("SVG")
-                                .extension("heif")
-                                .extension("HEIF")
-                                .extension("heic")
-                                .extension("HEIC"),
-                        )
+                        .filter(all)
                         .filter(
                             FileFilter::new("JPEG")
                                 .extension("jpg")
                                 .extension("jpeg")
+                                .extension("jpe")
                                 .extension("JPEG")
-                                .extension("JPG"),
+                                .extension("JPG")
+                                .extension("JPE"),
                         )
                         .filter(FileFilter::new("png").extension("png").extension("PNG"))
                         .filter(FileFilter::new("gif").extension("gif").extension("GIF"))
@@ -2306,7 +2293,15 @@ impl Application for CosmicViewer {
                         )
                         .filter(FileFilter::new("avif").extension("avif").extension("AVIF"))
                         .filter(FileFilter::new("ico").extension("ico").extension("ICO"))
-                        .filter(FileFilter::new("hdr").extension("hdr").extension("HDR"));
+                        .filter(FileFilter::new("hdr").extension("hdr").extension("HDR"))
+                        .filter(
+                            FileFilter::new("SVG")
+                                .extension("svg")
+                                .extension("SVG")
+                                .extension("svgz")
+                                .extension("SVGZ"),
+                        )
+                        .filter(raw);
 
                     match dialog.open_file().await {
                         Ok(response) => response.url().to_file_path().map_or_else(
@@ -2375,10 +2370,20 @@ impl Application for CosmicViewer {
             },
             ViewerMessage::SaveAs => {
                 let current = self.nav.current();
+                // WMDE: a file the viewer cannot write, a camera RAW or a drawing among them, is
+                // offered as a PNG; under its own name the save could only fail.
+                let writable = |path: &Path| {
+                    image::ImageFormat::from_path(path).is_ok_and(|format| format.writing_enabled())
+                };
                 let suggested = current
                     .and_then(|path| {
-                        path.file_name()
-                            .map(|name| name.to_string_lossy().to_string())
+                        if writable(path) {
+                            path.file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                        } else {
+                            path.file_stem()
+                                .map(|stem| format!("{}.png", stem.to_string_lossy()))
+                        }
                     })
                     .unwrap_or_else(|| "image.png".to_string());
                 let directory =
@@ -4603,7 +4608,7 @@ fn detail_row<'a>(label: String, value: String) -> Element<'a, ViewerMessage> {
 
 fn friendly_type_name(ext: &str) -> String {
     let format = match ext.to_lowercase().as_str() {
-        "jpg" | "jpeg" => "JPEG",
+        "jpg" | "jpeg" | "jpe" => "JPEG",
         "png" => "PNG",
         "gif" => "GIF",
         "webp" => "WebP",
@@ -4619,8 +4624,9 @@ fn friendly_type_name(ext: &str) -> String {
         "pnm" => "PNM",
         "qoi" => "QOI",
         "ff" | "farbfeld" => "Farbfeld",
-        "svg" => "SVG",
+        "svg" | "svgz" => "SVG",
         "heif" | "heic" => "HEIF",
+        raw if raw_mime_type(raw).is_some() => "RAW",
         _ => return fl!("image-type-generic"),
     };
     fl!("image-type-format", format = format)
