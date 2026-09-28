@@ -6125,6 +6125,7 @@ version = "1.9.0"
 dependencies = [
  "dirs 6.0.0",
  "fast_image_resize",
+ "fontconfig-parser",
  "image",
  "jxl-oxide",
  "kamadak-exif",

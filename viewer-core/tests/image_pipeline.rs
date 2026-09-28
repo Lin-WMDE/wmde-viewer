@@ -415,3 +415,30 @@ async fn pnm_samples_are_scaled_by_maxval() {
     assert_eq!(pixels.get_pixel(0, 0).0, [65535]);
     assert_eq!(pixels.get_pixel(1, 0).0, [0]);
 }
+
+// WMDE: text in a drawing is set with the system's fonts; it was dropped for want of any. A
+// machine with no fonts installed has nothing to set it with, and says so.
+#[tokio::test]
+async fn text_in_a_drawing_is_drawn() {
+    let mut fonts = resvg::usvg::fontdb::Database::new();
+    fonts.load_system_fonts();
+    if fonts.is_empty() {
+        eprintln!("skipped: no fonts are installed here");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sign.svg");
+    std::fs::write(
+        &path,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="100"><rect width="400" height="100" fill="white"/><text x="10" y="75" font-size="72" font-family="sans-serif" fill="black">WMDE</text></svg>"#,
+    )
+    .unwrap();
+    let loaded = load_image(path).await.expect("drawing");
+    let dark = loaded
+        .image
+        .to_rgba8()
+        .pixels()
+        .filter(|pixel| pixel.0[0] < 128)
+        .count();
+    assert!(dark > 1000, "only {dark} dark pixels: the text is missing");
+}

@@ -9,6 +9,7 @@ pub mod loader;
 pub mod nav;
 pub mod raw;
 pub mod save;
+mod svg_fonts;
 pub mod wallpaper;
 
 // Re-exports

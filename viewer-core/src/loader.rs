@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::{budget, raw};
+use crate::{budget, raw, svg_fonts};
 use cosmic::widget::image::Handle;
 use fast_image_resize::{
     FilterType as ResizeFilter, PixelType, ResizeAlg, ResizeOptions, Resizer,
@@ -1105,7 +1105,8 @@ fn render_svg(tree: &usvg::Tree, w: u32, h: u32) -> Result<Vec<u8>, LoadError> {
 
 fn load_svg_at(path: &Path, max: u32) -> Result<LoadedImage, LoadError> {
     let data = fs::read(path)?;
-    let tree = usvg::Tree::from_data(&data, &usvg::Options::default())
+    // WMDE: with the system's fonts; see svg_fonts.
+    let tree = usvg::Tree::from_data(&data, &svg_fonts::svg_options())
         .map_err(|e| LoadError::UnsupportedFormat(format!("SVG: {e}")))?;
 
     let (w, h) = svg_fit_dimensions(&tree, max);

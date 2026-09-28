@@ -133,6 +133,7 @@ pub fn read_details(path: &Path) -> Details {
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn drawing_size(path: &Path) -> Option<(u32, u32)> {
     let data = fs::read(path).ok()?;
+    // The size a drawing declares needs no fonts; the loader's options would load them.
     let size = usvg::Tree::from_data(&data, &usvg::Options::default())
         .ok()?
         .size();
