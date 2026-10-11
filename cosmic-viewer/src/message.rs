@@ -44,10 +44,8 @@ pub enum UnsavedChoice {
 #[derive(Debug, Clone)]
 pub enum ViewerMessage {
     AppTheme(AppTheme),
-    Copy,
     CopyToClipboard,
     CopyFilePath,
-    Cut,
     HoverItem(Option<usize>),
     LaunchUrl(String),
     NavScroll(Viewport),
@@ -56,7 +54,6 @@ pub enum ViewerMessage {
     OpenFolderDialog,
     OpenRecent(usize),
     OpenContaining,
-    Paste,
     Save,
     SaveAs,
     SavedAs(PathBuf),

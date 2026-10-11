@@ -28,9 +28,6 @@ pub enum MenuAction {
     Undo,
     Redo,
     RevertAll,
-    Cut,
-    Copy,
-    Paste,
     CopyToClipboard,
     RotateLeft,
     RotateRight,
@@ -53,10 +50,7 @@ impl MenuAction {
             Self::OpenFolder => ViewerMessage::OpenFolderDialog,
             Self::OpenRecent(idx) => ViewerMessage::OpenRecent(idx),
             Self::OpenContaining => ViewerMessage::OpenContaining,
-            Self::Copy => ViewerMessage::Copy,
             Self::CopyToClipboard => ViewerMessage::CopyToClipboard,
-            Self::Cut => ViewerMessage::Cut,
-            Self::Paste => ViewerMessage::Paste,
             Self::Save => ViewerMessage::Save,
             Self::SaveAs => ViewerMessage::SaveAs,
             Self::Quit => ViewerMessage::CloseRequested,
@@ -251,36 +245,15 @@ pub fn init_keybinds() -> HashMap<KeyBind, MenuAction> {
         MenuAction::RevertAll,
     );
 
+    // WMDE: Ctrl+C copies the picture, as in wmde-photos. Upstream bound it to an empty Copy
+    // and put Ctrl+Shift+C on both copying and opening the containing folder, where the later
+    // insert won; Ctrl+X and Ctrl+V had nothing to cut or paste and are gone with their items.
     binds.insert(
         KeyBind {
             modifiers: vec![Modifier::Ctrl],
-            key: Key::Character("x".into()),
-        },
-        MenuAction::Cut,
-    );
-
-    binds.insert(
-        KeyBind {
-            modifiers: vec![Modifier::Ctrl],
-            key: Key::Character("c".into()),
-        },
-        MenuAction::Copy,
-    );
-
-    binds.insert(
-        KeyBind {
-            modifiers: vec![Modifier::Ctrl, Modifier::Shift],
             key: Key::Character("c".into()),
         },
         MenuAction::CopyToClipboard,
-    );
-
-    binds.insert(
-        KeyBind {
-            modifiers: vec![Modifier::Ctrl],
-            key: Key::Character("v".into()),
-        },
-        MenuAction::Paste,
     );
 
     binds.insert(
@@ -342,4 +315,32 @@ pub fn keyboard_shortcut_handler(
         .get_or_init(init_keybinds)
         .get(&key_bind)
         .map(cosmic::widget::menu::Action::message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bound(modifiers: Vec<Modifier>, key: &str) -> Option<MenuAction> {
+        init_keybinds()
+            .get(&KeyBind {
+                modifiers,
+                key: Key::Character(key.into()),
+            })
+            .copied()
+    }
+
+    #[test]
+    fn copy_and_open_containing_have_a_key_each() {
+        assert_eq!(
+            bound(vec![Modifier::Ctrl], "c"),
+            Some(MenuAction::CopyToClipboard)
+        );
+        assert_eq!(
+            bound(vec![Modifier::Ctrl, Modifier::Shift], "c"),
+            Some(MenuAction::OpenContaining)
+        );
+        assert_eq!(bound(vec![Modifier::Ctrl], "x"), None);
+        assert_eq!(bound(vec![Modifier::Ctrl], "v"), None);
+    }
 }

@@ -95,14 +95,9 @@ fn build_edit_menu(
         redo_item,
         revert_all_item,
         menu::Item::Divider,
-        make_button(fl!("menu-cut"), None, MenuAction::Cut),
-        make_button(fl!("menu-copy"), None, MenuAction::Copy),
-        make_button(fl!("menu-paste"), None, MenuAction::Paste),
-        make_button(
-            fl!("menu-copy-to-clipboard"),
-            None,
-            MenuAction::CopyToClipboard,
-        ),
+        // WMDE: one Copy that copies the picture (Ctrl+C); upstream's Cut, Copy and Paste did
+        // nothing, and its "Copy image to clipboard" stays in the canvas context menu.
+        make_button(fl!("menu-copy"), None, MenuAction::CopyToClipboard),
         menu::Item::Divider,
         make_button(fl!("menu-rotate-left"), None, MenuAction::RotateLeft),
         make_button(fl!("menu-rotate-right"), None, MenuAction::RotateRight),

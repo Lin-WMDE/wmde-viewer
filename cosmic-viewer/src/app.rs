@@ -2304,9 +2304,6 @@ impl Application for CosmicViewer {
 
                 return cosmic::command::set_theme(theme);
             }
-            ViewerMessage::Copy => {
-                self.context_menu_position = None;
-            }
             ViewerMessage::CopyToClipboard => {
                 self.context_menu_position = None;
                 if let Some(path) = self.nav.current().cloned()
@@ -2329,7 +2326,7 @@ impl Application for CosmicViewer {
                 }
             }
             // No-op messages: reserved menu actions with no current behavior.
-            ViewerMessage::Cut | ViewerMessage::Paste | ViewerMessage::Cancelled => {}
+            ViewerMessage::Cancelled => {}
             ViewerMessage::OpenFileDialog => {
                 if self.guard_unsaved(ViewerMessage::OpenFileDialog) {
                     return Task::none();
@@ -2860,6 +2857,12 @@ impl Application for CosmicViewer {
                     return self.update(ViewerMessage::Edit(EditMessage::ColorPicker(
                         ToggleColorPicker,
                     )));
+                }
+                // WMDE: the rest of the keys belong to the picker's hex field while it is open. Its
+                // text input lets ArrowUp and ArrowDown through uncaptured, and they turned the
+                // picture or moved the annotation's caret.
+                if self.color_picker.get_is_active() {
+                    return Task::none();
                 }
 
                 if matches!(key, Key::Named(Named::Escape))
@@ -4682,19 +4685,23 @@ impl Application for CosmicViewer {
         };
 
         Subscription::batch([
-            event::listen_with(|event, _status, _id| match event {
+            event::listen_with(|event, status, _id| match event {
                 iced::Event::Window(iced::window::Event::Resized(size)) => {
                     Some(ViewerMessage::WindowResized(size))
                 }
                 iced::Event::Window(iced::window::Event::CloseRequested) => {
                     Some(ViewerMessage::CloseRequested)
                 }
+                // WMDE: a key a widget took - typing in the colour picker's hex field - is
+                // not a shortcut too; Delete there moved the picture to the trash.
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                     key,
                     modifiers,
                     text,
                     ..
-                }) => Some(ViewerMessage::KeyPressed(key, modifiers, text)),
+                }) if status == event::Status::Ignored => {
+                    Some(ViewerMessage::KeyPressed(key, modifiers, text))
+                }
                 _ => None,
             }),
             watcher_sub,
