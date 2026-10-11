@@ -115,6 +115,8 @@ pub enum NavMessage {
     NavThumbnailHide(usize),
     GridActivate(usize),
     GridFocus(usize),
+    // WMDE: one step of the arrow keys: focus, scroll and show, behind the unsaved-edits question.
+    Step(usize),
     GridScroll(f32),
 }
 

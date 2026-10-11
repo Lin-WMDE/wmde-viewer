@@ -3035,18 +3035,7 @@ impl Application for CosmicViewer {
                 {
                     let idx = self.nav.index().unwrap_or(0);
                     if idx > 0 {
-                        let thumbnail_size = self.config.thumbnail_size.pixels();
-                        let t = theme::active();
-                        let t = t.cosmic();
-                        let space_s = f32::from(t.spacing.space_s);
-
-                        return Task::batch(vec![
-                            self.update(ViewerMessage::Nav(NavMessage::GridFocus(idx - 1))),
-                            self.update(ViewerMessage::Nav(NavMessage::GridScroll(
-                                (idx - 1) as f32 * (thumbnail_size as f32 + space_s),
-                            ))),
-                            self.update(ViewerMessage::Nav(NavMessage::GridActivate(idx - 1))),
-                        ]);
+                        return self.update(ViewerMessage::Nav(NavMessage::Step(idx - 1)));
                     }
                 } else if modifiers == Modifiers::NONE
                     && (matches!(key, Key::Named(Named::ArrowRight))
@@ -3054,18 +3043,7 @@ impl Application for CosmicViewer {
                 {
                     let idx = self.nav.index().unwrap_or(0);
                     if idx + 1 < self.nav.total() {
-                        let thumbnail_size = self.config.thumbnail_size.pixels();
-                        let t = theme::active();
-                        let t = t.cosmic();
-                        let space_s = f32::from(t.spacing.space_s);
-
-                        return Task::batch(vec![
-                            self.update(ViewerMessage::Nav(NavMessage::GridFocus(idx + 1))),
-                            self.update(ViewerMessage::Nav(NavMessage::GridScroll(
-                                (idx + 1) as f32 * (thumbnail_size as f32 + space_s),
-                            ))),
-                            self.update(ViewerMessage::Nav(NavMessage::GridActivate(idx + 1))),
-                        ]);
+                        return self.update(ViewerMessage::Nav(NavMessage::Step(idx + 1)));
                     }
                 } else if let Some(msg) =
                     key_binds::shortcut_message(&self.key_binds, &key, modifiers, &physical_key)
@@ -3205,6 +3183,25 @@ impl Application for CosmicViewer {
                             }
                         }
                     }
+                }
+                // WMDE: the arrow keys step through here. The unsaved-edits question comes
+                // first: GridFocus already selects the neighbour, after which GridActivate took
+                // the step as made and dropped the edits without asking.
+                NavMessage::Step(idx) => {
+                    if self.nav.index() != Some(idx)
+                        && self.guard_unsaved(ViewerMessage::Nav(NavMessage::Step(idx)))
+                    {
+                        return Task::none();
+                    }
+                    let thumbnail_size = self.config.thumbnail_size.pixels();
+                    let space_s = f32::from(theme::active().cosmic().spacing.space_s);
+                    return Task::batch(vec![
+                        self.update(ViewerMessage::Nav(NavMessage::GridFocus(idx))),
+                        self.update(ViewerMessage::Nav(NavMessage::GridScroll(
+                            idx as f32 * (thumbnail_size as f32 + space_s),
+                        ))),
+                        self.update(ViewerMessage::Nav(NavMessage::GridActivate(idx))),
+                    ]);
                 }
                 NavMessage::GridFocus(idx) => {
                     if let Some(p) = self.nav.select(idx) {
