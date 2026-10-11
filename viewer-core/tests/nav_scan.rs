@@ -268,3 +268,44 @@ async fn files_given_are_ordered_as_the_album_orders() {
         [b, a, odd]
     );
 }
+
+/// The names of a directory's pictures, in the album's order.
+async fn album_names(names: &[&str]) -> Vec<String> {
+    let dir = tempfile::tempdir().unwrap();
+    for name in names {
+        fs::write(dir.path().join(name), b"x").unwrap();
+    }
+    scan_dir(dir.path(), false, SortMode::Name, SortOrder::Ascending)
+        .await
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect()
+}
+
+// WMDE: the album stands in the order wmde-files shows the directory in - its collator, numbers
+// by value, letter case and punctuation as the file manager weighs them.
+#[tokio::test]
+async fn names_sort_as_the_file_manager_sorts_them() {
+    let names = album_names(&[
+        "DSC04126.ARW",
+        "img10.png",
+        "drawing.svgz",
+        "Зима.jpg",
+        "DSC_1842.NEF",
+        "img2.png",
+        "Img3.png",
+    ])
+    .await;
+    assert_eq!(
+        names,
+        [
+            "drawing.svgz",
+            "DSC_1842.NEF",
+            "DSC04126.ARW",
+            "img2.png",
+            "Img3.png",
+            "img10.png",
+            "Зима.jpg",
+        ]
+    );
+}

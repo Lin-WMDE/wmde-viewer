@@ -36,6 +36,10 @@ url = "2.5.8"
 # WMDE: fontconfig's aliases for the families a drawing names and the system lacks, as fontdb
 # reads its generic ones; already in the graph through fontdb.
 fontconfig-parser = "0.5.8"
+# WMDE: the album sorts names with the collator wmde-files sorts its window with. The collator
+# and the locale alone, not the `icu` umbrella crate, which pulls calendars and the rest.
+icu_collator = "2.3.1"
+icu_locale_core = "2.3.0"
 turbojpeg.workspace = true
 zune-image.workspace = true
 

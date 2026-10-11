@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::raw::RAW_TYPES;
+use icu_collator::{
+    Collator, CollatorBorrowed, CollatorPreferences, options::CollatorOptions,
+    preferences::CollationNumericOrdering,
+};
+use icu_locale_core::Locale;
 use std::{
     cmp::Ordering,
     fs,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 use tokio::task::spawn_blocking;
 use viewer_config::{SortMode, SortOrder};
@@ -224,11 +230,7 @@ pub async fn sort_files(
 fn sort_images(images: &mut [PathBuf], sort_mode: SortMode, sort_order: SortOrder) {
     images.sort_by(|a, b| {
         let ordering = match sort_mode {
-            SortMode::Name => {
-                let a_name = a.file_name().and_then(|name| name.to_str()).unwrap_or("");
-                let b_name = b.file_name().and_then(|name| name.to_str()).unwrap_or("");
-                natural_cmp(a_name, b_name)
-            }
+            SortMode::Name => name_cmp(a, b),
             SortMode::Date => {
                 let a_time = fs::metadata(a)
                     .and_then(|meta| meta.modified())
@@ -259,51 +261,48 @@ pub fn is_supported_image(path: &Path) -> bool {
         .is_some_and(|ext| extensions().any(|known| known.eq_ignore_ascii_case(ext)))
 }
 
-fn natural_cmp(a: &str, b: &str) -> Ordering {
-    let mut a_chars = a.chars().peekable();
-    let mut b_chars = b.chars().peekable();
+/// WMDE: the collator the album sorts names with: wmde-files' own, for the interface language,
+/// numbers by value. Unset, it is American English's, as wmde-files falls back to.
+static SORTER: OnceLock<CollatorBorrowed<'static>> = OnceLock::new();
 
-    loop {
-        match (a_chars.peek().copied(), b_chars.peek().copied()) {
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(ac), Some(bc)) if ac.is_ascii_digit() && bc.is_ascii_digit() => {
-                match collect_number(&mut a_chars).cmp(&collect_number(&mut b_chars)) {
-                    Ordering::Equal => {}
-                    other => return other,
-                }
-            }
-            (Some(_), Some(_)) => {
-                // `peek()` above returned `Some`, so `next()` cannot be `None`.
-                let ac = a_chars
-                    .next()
-                    .expect("peeked char present")
-                    .to_ascii_lowercase();
-                let bc = b_chars
-                    .next()
-                    .expect("peeked char present")
-                    .to_ascii_lowercase();
-                match ac.cmp(&bc) {
-                    Ordering::Equal => {}
-                    other => return other,
-                }
-            }
-        }
+/// Sort names for `language`, a BCP-47 tag: the interface language, as wmde-files does.
+///
+/// The next picture is then the one that stands next in the file manager's window; Ukrainian,
+/// for one, puts Cyrillic before Latin. Takes effect only before the first album is sorted.
+pub fn set_sort_language(language: &str) {
+    let sorter = Locale::try_from_str(language)
+        .ok()
+        .and_then(collator)
+        .unwrap_or_else(default_collator);
+    if SORTER.set(sorter).is_err() {
+        tracing::warn!("the album sort language is set already; {language} is ignored");
     }
 }
 
-fn collect_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> u64 {
-    let mut num: u64 = 0;
+fn sorter() -> &'static CollatorBorrowed<'static> {
+    SORTER.get_or_init(default_collator)
+}
 
-    while let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() {
-            num = num * 10 + (c as u64 - '0' as u64);
-            chars.next();
-        } else {
-            break;
-        }
-    }
+fn collator(locale: Locale) -> Option<CollatorBorrowed<'static>> {
+    let mut prefs = CollatorPreferences::from(locale);
+    prefs.numeric_ordering = Some(CollationNumericOrdering::True);
+    Collator::try_new(prefs, CollatorOptions::default()).ok()
+}
 
-    num
+fn default_collator() -> CollatorBorrowed<'static> {
+    Locale::try_from_str("en-US")
+        .ok()
+        .and_then(collator)
+        .expect("compiled data carries an American English collator")
+}
+
+/// Compare two file names the way wmde-files orders them. It compares its display names, which
+/// only add zero-width spaces the collator ignores, and reads names that are not UTF-8 lossily.
+fn name_cmp(a: &Path, b: &Path) -> Ordering {
+    let name = |path: &Path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    sorter().compare(&name(a), &name(b))
 }

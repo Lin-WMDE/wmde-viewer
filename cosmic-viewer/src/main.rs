@@ -39,6 +39,11 @@ fn main() -> cosmic::iced::Result {
         .exit_on_close(false)
         .size_limits(Limits::NONE.min_width(360.0).min_height(300.0));
 
+    // WMDE: the album sorts names for the interface language, as wmde-files does.
+    viewer_core::set_sort_language(
+        &i18n_embed::LanguageLoader::current_language(&*localize::LANGUAGE_LOADER).to_string(),
+    );
+
     // WMDE: every path given, or the pictures directory; see viewer_core::args.
     let paths = viewer_core::args::start_paths(std::env::args_os().skip(1));
 
