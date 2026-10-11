@@ -2,7 +2,7 @@
 
 use crate::{
     details, failure, fl, icon_cache_get,
-    key_binds::{self, MenuAction, keyboard_shortcut_handler},
+    key_binds::{self, MenuAction},
     menu::menu_bar,
     message::{
         ContextMessage, EditMessage, ImageMessage, NavMessage, UnsavedChoice, ViewerMessage,
@@ -1758,7 +1758,7 @@ impl CosmicViewer {
 }
 
 impl Application for CosmicViewer {
-    const APP_ID: &'static str = "fun.wmde.Viewer";
+    const APP_ID: &'static str = key_binds::APP_ID;
 
     type Executor = cosmic::executor::Default;
     // WMDE: every path the command line gave; see viewer_core::args.
@@ -1809,7 +1809,7 @@ impl Application for CosmicViewer {
             core,
             cur_scroll: None,
             hovered_item: None,
-            key_binds: key_binds::init_keybinds(),
+            key_binds: key_binds::key_binds(key_binds::load_custom()),
             config,
             app_themes,
             nav: NavState::new(),
@@ -2327,6 +2327,9 @@ impl Application for CosmicViewer {
             }
             // No-op messages: reserved menu actions with no current behavior.
             ViewerMessage::Cancelled => {}
+            ViewerMessage::ShortcutsChanged(custom) => {
+                self.key_binds = key_binds::key_binds(custom);
+            }
             ViewerMessage::OpenFileDialog => {
                 if self.guard_unsaved(ViewerMessage::OpenFileDialog) {
                     return Task::none();
@@ -2824,7 +2827,7 @@ impl Application for CosmicViewer {
             ViewerMessage::CloseToast(toast_id) => {
                 self.toasts.remove(toast_id);
             }
-            ViewerMessage::KeyPressed(key, modifiers, text) => {
+            ViewerMessage::KeyPressed(key, modifiers, text, physical_key) => {
                 if self.context_menu_position.is_some() && matches!(key, Key::Named(Named::Escape))
                 {
                     self.context_menu_position = None;
@@ -2880,7 +2883,10 @@ impl Application for CosmicViewer {
                     return self.update(ViewerMessage::Canvas(CanvasMessage::Fullscreen));
                 }
 
-                if matches!(key, Key::Named(Named::Delete)) && self.viewport.active_tool().is_none()
+                // WMDE: plain Delete only; Delete with modifiers is left to someone's own bindings.
+                if matches!(key, Key::Named(Named::Delete))
+                    && modifiers.is_empty()
+                    && self.viewport.active_tool().is_none()
                 {
                     return self.update(ViewerMessage::MoveToTrash);
                 }
@@ -3164,7 +3170,9 @@ impl Application for CosmicViewer {
                             self.update(ViewerMessage::Nav(NavMessage::GridActivate(idx + 1))),
                         ]);
                     }
-                } else if let Some(msg) = keyboard_shortcut_handler(key, modifiers, text) {
+                } else if let Some(msg) =
+                    key_binds::shortcut_message(&self.key_binds, &key, modifiers, &physical_key)
+                {
                     return self.update(msg);
                 }
             }
@@ -4698,14 +4706,34 @@ impl Application for CosmicViewer {
                     key,
                     modifiers,
                     text,
+                    physical_key,
                     ..
-                }) if status == event::Status::Ignored => {
-                    Some(ViewerMessage::KeyPressed(key, modifiers, text))
-                }
+                }) if status == event::Status::Ignored => Some(ViewerMessage::KeyPressed(
+                    key,
+                    modifiers,
+                    text,
+                    physical_key,
+                )),
                 _ => None,
             }),
             watcher_sub,
             details_sub,
+            // WMDE: someone's own bindings, from the settings application, apply at once.
+            cosmic::cosmic_config::config_subscription::<_, key_binds::ShortcutsEntry>(
+                std::any::TypeId::of::<key_binds::ShortcutsEntry>(),
+                key_binds::APP_ID.into(),
+                <key_binds::ShortcutsEntry as cosmic::cosmic_config::CosmicConfigEntry>::VERSION,
+            )
+            .map(|update| {
+                if !update.errors.is_empty() {
+                    tracing::warn!(
+                        "errors reading the shortcuts config {:?}: {:?}",
+                        update.keys,
+                        update.errors
+                    );
+                }
+                ViewerMessage::ShortcutsChanged(update.config.shortcuts_custom)
+            }),
         ])
     }
 }

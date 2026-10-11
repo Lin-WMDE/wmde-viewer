@@ -1,0 +1,126 @@
+// WMDE application shortcuts declaration. See .doc/shortcuts/.
+//
+// The default bindings repeat fallback_shortcuts in cosmic-viewer/src/key_binds.rs; the test
+// `the_declaration_matches_the_code` fails if the two drift apart. The labels repeat the menu
+// strings of i18n/*/wmde_viewer.ftl.
+(
+    schema: 1,
+    config: (id: "fun.wmde.Viewer", version: 2, key: "shortcuts_custom"),
+    groups: [
+        (
+            title: { "": "File", "uk": "Файл" },
+            actions: [
+                (
+                    action: "OpenFile",
+                    label: { "": "Open file", "uk": "Відкрити файл" },
+                    defaults: [(modifiers: [Ctrl], key: "O")],
+                ),
+                (
+                    action: "OpenFolder",
+                    label: { "": "Open folder", "uk": "Відкрити теку" },
+                    defaults: [(modifiers: [Ctrl, Shift], key: "O")],
+                ),
+                (
+                    action: "OpenContaining",
+                    label: { "": "Open containing folder", "uk": "Відкрити теку з файлом" },
+                    defaults: [(modifiers: [Ctrl, Shift], key: "C")],
+                ),
+                (
+                    action: "Save",
+                    label: { "": "Save", "uk": "Зберегти" },
+                    defaults: [(modifiers: [Ctrl], key: "S")],
+                ),
+                (
+                    action: "SaveAs",
+                    label: { "": "Save as", "uk": "Зберегти як" },
+                    defaults: [(modifiers: [Ctrl, Shift], key: "S")],
+                ),
+                (
+                    action: "ImageDetails",
+                    label: { "": "Image details", "uk": "Подробиці зображення" },
+                    defaults: [(modifiers: [Ctrl], key: "Space")],
+                ),
+                (
+                    action: "Settings",
+                    label: { "": "Settings", "uk": "Налаштування" },
+                    defaults: [(modifiers: [Ctrl], key: ",")],
+                ),
+                (
+                    action: "Quit",
+                    label: { "": "Quit", "uk": "Вийти" },
+                    defaults: [(modifiers: [Ctrl], key: "Q")],
+                ),
+            ],
+        ),
+        (
+            title: { "": "Edit", "uk": "Редагувати" },
+            actions: [
+                (
+                    action: "Undo",
+                    label: { "": "Undo", "uk": "Скасувати" },
+                    defaults: [(modifiers: [Ctrl], key: "Z")],
+                ),
+                (
+                    action: "Redo",
+                    label: { "": "Redo", "uk": "Повторити" },
+                    defaults: [(modifiers: [Ctrl], key: "Y")],
+                ),
+                (
+                    action: "RevertAll",
+                    label: { "": "Revert all changes", "uk": "Відкотити всі зміни" },
+                    defaults: [(modifiers: [Ctrl, Shift], key: "Z")],
+                ),
+                (
+                    action: "Copy",
+                    label: { "": "Copy", "uk": "Копіювати" },
+                    defaults: [(modifiers: [Ctrl], key: "C")],
+                ),
+                (
+                    action: "RotateLeft",
+                    label: { "": "Rotate left 90°", "uk": "Повернути вліво на 90°" },
+                    defaults: [(modifiers: [Ctrl, Shift], key: "R")],
+                ),
+                (
+                    action: "RotateRight",
+                    label: { "": "Rotate right 90°", "uk": "Повернути вправо на 90°" },
+                    defaults: [(modifiers: [Ctrl], key: "R")],
+                ),
+            ],
+        ),
+        (
+            title: { "": "View", "uk": "Вид" },
+            actions: [
+                (
+                    action: "ZoomIn",
+                    label: { "": "Zoom in", "uk": "Наблизити" },
+                    defaults: [
+                        (modifiers: [Ctrl], key: "="),
+                        (modifiers: [Ctrl, Shift], key: "="),
+                        (modifiers: [Ctrl], key: "+"),
+                        (modifiers: [Ctrl, Shift], key: "+"),
+                    ],
+                ),
+                (
+                    action: "ZoomOut",
+                    label: { "": "Zoom out", "uk": "Віддалити" },
+                    defaults: [(modifiers: [Ctrl], key: "-")],
+                ),
+                (
+                    action: "ActualSize",
+                    label: { "": "Actual Size", "uk": "Фактичний розмір" },
+                    defaults: [(modifiers: [Ctrl], key: "1")],
+                ),
+                (
+                    action: "FitToView",
+                    label: { "": "Fit to view", "uk": "Підігнати до вікна" },
+                    defaults: [(modifiers: [Ctrl], key: "0")],
+                ),
+                (
+                    action: "Fullscreen",
+                    label: { "": "Fullscreen", "uk": "На весь екран" },
+                    defaults: [(modifiers: [Ctrl, Shift], key: "F")],
+                ),
+            ],
+        ),
+    ],
+)

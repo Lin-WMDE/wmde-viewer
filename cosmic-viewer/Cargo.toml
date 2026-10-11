@@ -50,6 +50,12 @@ tokio.workspace = true
 tracing.workspace = true
 # WMDE: the journal for tracing; the version the rest of the stack uses.
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+# WMDE: the shortcut actions are stored in the config as serde values.
+serde.workspace = true
+
+[dev-dependencies]
+# WMDE: the tests read the shortcuts declaration and the stored map as RON; already in the graph.
+ron = "0.12.2"
 
 [lints]
 workspace = true

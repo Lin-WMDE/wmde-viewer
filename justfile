@@ -20,6 +20,10 @@ metainfo := APPID + '.metainfo.xml'
 metainfo-src := 'res' / metainfo
 metainfo-dst := clean(rootdir / prefix) / 'share' / 'metainfo' / metainfo
 
+# WMDE: the shortcuts declaration the settings application builds the viewer's page from.
+shortcuts-src := 'res' / 'app-shortcuts' / APPID + '.ron'
+shortcuts-dst := clean(rootdir / prefix) / 'share' / 'wmde' / 'app-shortcuts' / APPID + '.ron'
+
 icons-src := 'res' / 'icons' / 'hicolor'
 icons-dst := clean(rootdir / prefix) / 'share' / 'icons' / 'hicolor'
 
@@ -67,6 +71,7 @@ install:
     install -Dm0755 {{bin-src}} {{bin-dst}}
     install -Dm0644 {{desktop-src}} {{desktop-dst}}
     install -Dm0644 {{metainfo-src}} {{metainfo-dst}}
+    install -Dm0644 {{shortcuts-src}} {{shortcuts-dst}}
     for size in `ls {{icons-src}}`; do \
         install -Dm0644 "{{icons-src}}/$size/apps/{{APPID}}.svg" "{{icons-dst}}/$size/apps/{{APPID}}.svg"; \
     done

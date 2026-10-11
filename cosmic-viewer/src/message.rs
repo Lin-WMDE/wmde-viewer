@@ -81,7 +81,15 @@ pub enum ViewerMessage {
     Unsaved(UnsavedChoice),
     Nav(NavMessage),
     WindowResized(Size),
-    KeyPressed(Key, Modifiers, Option<SmolStr>),
+    // WMDE: the physical key too, so a binding fires under any layout.
+    KeyPressed(
+        Key,
+        Modifiers,
+        Option<SmolStr>,
+        cosmic::iced::keyboard::key::Physical,
+    ),
+    /// WMDE: the `shortcuts_custom` key of the viewer's config changed.
+    ShortcutsChanged(crate::key_binds::Shortcuts),
     Image(ImageMessage),
     Context(ContextMessage),
     Canvas(CanvasMessage),
