@@ -22,6 +22,12 @@ license=('GPL-3.0-only')
 #
 # libxkbcommon is NEEDED as well, not dlopen'd: winit resolves the keyboard map through it.
 depends=('glibc' 'gcc-libs' 'libxkbcommon' 'wayland' 'libheif' 'libjpeg-turbo')
+# The viewer took over wmde-photos, the stack's former picture viewer, as wmde-settings took
+# over wmde-sysinfo: replaces makes `pacman -Syu` remove an installed wmde-photos, which
+# dropping it from the repo alone would leave behind as a foreign package; conflicts covers
+# pacman -U and a fresh pacman -S. No provides: this package installs no /usr/bin/wmde-photos.
+replaces=('wmde-photos')
+conflicts=('wmde-photos')
 optdepends=('wmde-icons-base: WMDE icon theme')
 makedepends=('rust' 'cargo' 'just' 'git' 'wayland' 'clang' 'lld' 'pkgconf' 'libheif'
              'libjpeg-turbo')
