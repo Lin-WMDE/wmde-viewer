@@ -1938,13 +1938,8 @@ impl Application for CosmicViewer {
         let page = self.context_page?;
         let content = match page {
             ContextMessage::ImageDetails => self.image_details_page(),
-            ContextMessage::About => {
-                return Some(context_drawer::about(
-                    &self.about,
-                    |s| Self::Message::LaunchUrl(s.to_string()),
-                    Self::Message::Context(ContextMessage::About),
-                ));
-            }
+            // WMDE: About is a window of its own, opened in `update`.
+            ContextMessage::About => return None,
             ContextMessage::Settings => {
                 let content = self.settings();
                 return Some(
@@ -2327,6 +2322,11 @@ impl Application for CosmicViewer {
             }
             // No-op messages: reserved menu actions with no current behavior.
             ViewerMessage::Cancelled => {}
+            ViewerMessage::OfWindow(id, message) => {
+                if self.core.main_window_id() == Some(id) {
+                    return self.update(*message);
+                }
+            }
             ViewerMessage::ShortcutsChanged(custom) => {
                 self.key_binds = key_binds::key_binds(custom);
             }
@@ -3455,6 +3455,11 @@ impl Application for CosmicViewer {
                     self.cache.clear_pending_thumbnail(&path);
                 }
             },
+            // WMDE: About opens the framework's window, as in the rest of the stack.
+            ViewerMessage::Context(ContextMessage::About) => {
+                self.context_menu_position = None;
+                return self.open_about(self.about.clone());
+            }
             ViewerMessage::Context(page) => {
                 self.context_menu_position = None;
                 if self.context_page == Some(page) {
@@ -4638,15 +4643,6 @@ impl Application for CosmicViewer {
             ViewerMessage::NavScroll(viewport) => {
                 self.cur_scroll = Some(viewport);
             }
-            ViewerMessage::LaunchUrl(url) => {
-                if let Err(err) = open::that_detached(&url) {
-                    tasks.push(self.complain(
-                        &format!("open {url}"),
-                        &err.to_string(),
-                        fl!("error-open-link"),
-                    ));
-                }
-            }
             ViewerMessage::HoverItem(img) => {
                 self.hovered_item = img;
             }
@@ -4693,28 +4689,28 @@ impl Application for CosmicViewer {
         };
 
         Subscription::batch([
-            event::listen_with(|event, status, _id| match event {
-                iced::Event::Window(iced::window::Event::Resized(size)) => {
-                    Some(ViewerMessage::WindowResized(size))
-                }
-                iced::Event::Window(iced::window::Event::CloseRequested) => {
-                    Some(ViewerMessage::CloseRequested)
-                }
-                // WMDE: a key a widget took - typing in the colour picker's hex field - is
-                // not a shortcut too; Delete there moved the picture to the trash.
-                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                    key,
-                    modifiers,
-                    text,
-                    physical_key,
-                    ..
-                }) if status == event::Status::Ignored => Some(ViewerMessage::KeyPressed(
-                    key,
-                    modifiers,
-                    text,
-                    physical_key,
-                )),
-                _ => None,
+            event::listen_with(|event, status, id| {
+                let message = match event {
+                    iced::Event::Window(iced::window::Event::Resized(size)) => {
+                        ViewerMessage::WindowResized(size)
+                    }
+                    iced::Event::Window(iced::window::Event::CloseRequested) => {
+                        ViewerMessage::CloseRequested
+                    }
+                    // WMDE: a key a widget took - typing in the colour picker's hex field - is
+                    // not a shortcut too; Delete there moved the picture to the trash.
+                    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key,
+                        modifiers,
+                        text,
+                        physical_key,
+                        ..
+                    }) if status == event::Status::Ignored => {
+                        ViewerMessage::KeyPressed(key, modifiers, text, physical_key)
+                    }
+                    _ => return None,
+                };
+                Some(ViewerMessage::OfWindow(id, Box::new(message)))
             }),
             watcher_sub,
             details_sub,

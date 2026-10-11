@@ -47,7 +47,6 @@ pub enum ViewerMessage {
     CopyToClipboard,
     CopyFilePath,
     HoverItem(Option<usize>),
-    LaunchUrl(String),
     NavScroll(Viewport),
     Open(PathBuf),
     OpenFileDialog,
@@ -90,6 +89,10 @@ pub enum ViewerMessage {
     ),
     /// WMDE: the `shortcuts_custom` key of the viewer's config changed.
     ShortcutsChanged(crate::key_binds::Shortcuts),
+    /// WMDE: an event of one window, run only when it is the main window's: a key pressed in
+    /// the framework's About window must not turn or trash the picture, nor its width reach
+    /// `window_width`.
+    OfWindow(cosmic::iced::window::Id, Box<Self>),
     Image(ImageMessage),
     Context(ContextMessage),
     Canvas(CanvasMessage),

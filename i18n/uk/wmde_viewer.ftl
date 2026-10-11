@@ -156,7 +156,6 @@ error-open-title = Не вдалося відкрити «{ $file }»
 error-open = Не вдалося відкрити «{ $file }»: { $error }
 error-save = Не вдалося зберегти зображення: { $error }
 error-open-folder = Не вдалося відкрити теку
-error-open-link = Не вдалося відкрити посилання
 error-dialog = Не вдалося показати діалог вибору файлу
 error-wallpaper = Не вдалося зробити зображення тлом: { $error }
 error-trash = Не вдалося пересунути «{ $file }» до смітника: { $error }
