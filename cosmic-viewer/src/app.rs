@@ -60,7 +60,7 @@ use std::{
 use viewer_canvas::{CanvasImage, CanvasMessage, ToolKind, ViewportManager};
 use viewer_config::{AppTheme, ViewerConfig};
 use viewer_core::{
-    CachedImage, ClipboardImage, ImageCache, NavState, get_image_dir, image_mime_type, is_drawing,
+    CachedImage, ClipboardImage, ImageCache, NavState, get_image_dir, is_drawing,
     is_supported_image, keeps_depth, load_image, load_thumbnail, nav, raw::raw_mime_type,
     read_details, save_image, scan_dir, sort_files,
 };
@@ -161,6 +161,8 @@ pub struct CosmicViewer {
     details_stamp: u64,
     /// WMDE: wallpapers being set, and a quit waiting for them to finish.
     wallpapers_running: usize,
+    /// WMDE: the latest copy asked for. Reads finish in any order; only this one is written.
+    copy_request: u64,
     quit_waiting: bool,
     about: About,
 }
@@ -1781,6 +1783,7 @@ impl Application for CosmicViewer {
             details: None,
             details_stamp: 0,
             wallpapers_running: 0,
+            copy_request: 0,
             quit_waiting: false,
             about: About::default()
                 .name(fl!("app-name"))
@@ -2188,19 +2191,26 @@ impl Application for CosmicViewer {
             }
             ViewerMessage::CopyToClipboard => {
                 self.context_menu_position = None;
-                if let Some(path) = self.nav.current().cloned()
-                    && let Some(mime) = path
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .and_then(image_mime_type)
-                    && let Ok(data) = std::fs::read(&path)
-                {
-                    return clipboard::write_data(ClipboardImage {
-                        data,
-                        mime: mime.to_string(),
-                    });
+                if let Some(path) = self.nav.current().cloned() {
+                    self.copy_request += 1;
+                    return copy_task(self.copy_request, path);
                 }
             }
+            ViewerMessage::Copied(request, ..) if request != self.copy_request => {}
+            ViewerMessage::Copied(_, path, result) => match result {
+                Ok(copy) => return clipboard::write_data(copy),
+                Err((reason, detail)) => {
+                    let file_name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    return self.complain(
+                        "copy the image",
+                        &detail,
+                        fl!("error-copy", file = file_name.as_str(), error = reason),
+                    );
+                }
+            },
             ViewerMessage::CopyFilePath => {
                 self.context_menu_position = None;
                 if let Some(path) = self.nav.current() {
@@ -4702,6 +4712,28 @@ fn detail_row<'a>(label: String, value: String) -> Element<'a, ViewerMessage> {
         .push(text::body(value))
         .spacing(2)
         .into()
+}
+
+// WMDE: the file is read on a plain thread, as the wallpaper is: a large RAW or a file on a
+// slow mount must not stall the window, and a dead mount must not hold the exit.
+fn copy_task(request: u64, path: PathBuf) -> Task<Action<ViewerMessage>> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let read = path.clone();
+    std::thread::spawn(move || {
+        let result = ClipboardImage::read(&read).map_err(|err| {
+            (
+                failure::io_reason(&err),
+                format!("{}: {err}", read.display()),
+            )
+        });
+        _ = sender.send(result);
+    });
+    future(async move {
+        let result = receiver
+            .await
+            .unwrap_or_else(|err| Err((fl!("error-reason-system"), err.to_string())));
+        Action::App(ViewerMessage::Copied(request, path, result))
+    })
 }
 
 /// WMDE: the files among `paths`, each once, the first spelling of it kept: the same file given

@@ -14,6 +14,7 @@ use std::{path::PathBuf, sync::Arc};
 use trash::TrashItem;
 use viewer_canvas::CanvasMessage;
 use viewer_config::AppTheme;
+use viewer_core::ClipboardImage;
 use viewer_tools::{
     annotate::{AnnotateColor, AnnotateTool},
     crop::CropRatio,
@@ -45,6 +46,9 @@ pub enum UnsavedChoice {
 pub enum ViewerMessage {
     AppTheme(AppTheme),
     CopyToClipboard,
+    // WMDE: the file read for the clipboard for copy request N, or the reason it was not, as for
+    // WallpaperResult.
+    Copied(u64, PathBuf, Result<ClipboardImage, (String, String)>),
     CopyFilePath,
     HoverItem(Option<usize>),
     NavScroll(Viewport),

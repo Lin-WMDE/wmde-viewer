@@ -156,6 +156,7 @@ error-save = Could not save the image: { $error }
 error-open-folder = Could not open the folder
 error-dialog = Could not show the file dialog
 error-wallpaper = Could not set the wallpaper: { $error }
+error-copy = Could not copy { $file }: { $error }
 error-trash = Could not move { $file } to trash: { $error }
 error-restore = Could not restore from trash: { $error }
 # WMDE: the reason put after the colon of a failure
