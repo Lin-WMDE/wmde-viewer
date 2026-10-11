@@ -10,6 +10,9 @@ use cosmic::{
 };
 use std::{collections::HashMap, sync::LazyLock};
 
+/// WMDE: the width of the viewer's menus, the menu bar's and the canvas context menu's.
+pub const MENU_WIDTH: u16 = 320;
+
 static MENU_ID: LazyLock<cosmic::widget::Id> =
     LazyLock::new(|| cosmic::widget::Id::new("responsive-menu"));
 
@@ -142,8 +145,9 @@ pub fn menu_bar<'a>(
 
     responsive_menu_bar()
         .item_height(ItemHeight::Dynamic(20))
-        .item_width(ItemWidth::Uniform(320))
-        .spacing(4.)
+        .item_width(ItemWidth::Uniform(MENU_WIDTH))
+        // WMDE: the gap between the menu titles from the theme, as in Files.
+        .spacing(cosmic::theme::spacing().space_xxxs.into())
         .into_element(
             core,
             key_binds,

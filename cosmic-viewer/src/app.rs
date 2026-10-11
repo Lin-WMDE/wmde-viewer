@@ -32,7 +32,7 @@ use cosmic::{
         window,
     },
     task::{self, future},
-    theme::{self, Button},
+    theme,
     widget::{
         self, Column, Id, Row, Space, Toasts,
         about::About,
@@ -44,10 +44,9 @@ use cosmic::{
         },
         container, divider, dropdown, icon,
         image::Handle,
-        menu::{KeyBind, menu_button},
-        mouse_area, nav_bar, popover, scrollable, segmented_button, segmented_control,
-        space::horizontal,
-        text, toaster,
+        menu::{self as menu_widget, KeyBind, menu_button},
+        mouse_area, nav_bar, popover, scrollable, segmented_button, segmented_control, text,
+        toaster,
     },
 };
 use image::DynamicImage;
@@ -825,57 +824,36 @@ impl CosmicViewer {
         content.into()
     }
 
+    // WMDE: the menu standard of the stack (.doc/appearance/07-menus.md): every item opens with
+    // the icon column, the box is `menu_popup`, and the width is the viewer's own menu bar width,
+    // which also keeps the longest Ukrainian label on one line.
     fn build_context_menu_element<'a>() -> Element<'a, ViewerMessage> {
-        let menu_item = |label: String, message: ViewerMessage| {
-            menu_button(vec![text(label).into()]).on_press(message)
+        let menu_item = |label: String, message: ViewerMessage| -> Element<'a, ViewerMessage> {
+            menu_button(vec![menu_widget::icon_column(None), text(label).into()])
+                .on_press(message)
+                .into()
         };
 
-        container(
-            Column::new()
-                .push(menu_item(
+        menu_popup(
+            vec![
+                menu_item(
                     fl!("menu-copy-to-clipboard"),
                     ViewerMessage::CopyToClipboard,
-                ))
-                .push(menu_item(
-                    fl!("menu-copy-file-path"),
-                    ViewerMessage::CopyFilePath,
-                ))
-                .push(menu_item(
+                ),
+                menu_item(fl!("menu-copy-file-path"), ViewerMessage::CopyFilePath),
+                menu_item(
                     fl!("menu-revert-all"),
                     ViewerMessage::Edit(EditMessage::RevertAll),
-                ))
-                .push(menu_item(
+                ),
+                menu_item(
                     fl!("menu-image-details"),
                     ViewerMessage::Context(ContextMessage::ImageDetails),
-                ))
-                .push(menu_item(
-                    fl!("menu-set-wallpaper"),
-                    ViewerMessage::SetWallpaper,
-                ))
-                .push(menu_item(
-                    fl!("menu-move-to-trash"),
-                    ViewerMessage::MoveToTrash,
-                )),
+                ),
+                menu_item(fl!("menu-set-wallpaper"), ViewerMessage::SetWallpaper),
+                menu_item(fl!("menu-move-to-trash"), ViewerMessage::MoveToTrash),
+            ],
+            f32::from(crate::menu::MENU_WIDTH),
         )
-        .padding(1)
-        .style(|theme| {
-            let cosmic = theme.cosmic();
-            // force opaque because it is not a real popup.
-            let component = &cosmic.background(false).component;
-            container::Style {
-                icon_color: Some(component.on.into()),
-                text_color: Some(component.on.into()),
-                background: Some(Background::Color(component.base.into())),
-                border: Border {
-                    radius: cosmic.radius_s().map(|x| x + 1.0).into(),
-                    width: 1.0,
-                    color: component.divider.into(),
-                },
-                ..Default::default()
-            }
-        })
-        .width(Length::Fixed(240.0))
-        .into()
     }
 
     fn popup_style(theme: &cosmic::Theme) -> container::Style {
@@ -977,7 +955,7 @@ impl CosmicViewer {
                             fl!("toolbar-zoom-out"),
                             ViewerMessage::Canvas(CanvasMessage::ZoomOut),
                         ))
-                        .push(text::body(zoom_pct))
+                        .push(zoom_label(zoom_pct))
                         .push(icon_btn(
                             "zoom-in-symbolic",
                             fl!("toolbar-zoom-in"),
@@ -1050,55 +1028,23 @@ impl CosmicViewer {
                 .image_size()
                 .is_some_and(|size| size.height > size.width);
 
-            let presets = CropRatio::presets();
-            let mut list = Column::new().spacing(4);
-
-            for ratio in presets {
-                let label = match ratio {
-                    CropRatio::Custom => fl!("crop-custom"),
-                    CropRatio::Original => fl!("crop-original"),
-                    CropRatio::Fixed(..) => ratio.label(is_portrait).to_string(),
-                };
-                let is_selected = *ratio == self.crop_ratio;
-                let item = Row::new()
-                    .push(container(text::body(label)).width(Length::Fixed(72.0)))
-                    .push(if is_selected {
-                        Element::from(icon(
-                            icon::from_name("object-select-symbolic").size(16).into(),
-                        ))
-                    } else {
-                        Element::from(Space::new().width(16))
-                    })
-                    .align_y(Alignment::Center)
-                    .width(Length::Fixed(104.0))
-                    .spacing(8);
-
-                list = list
-                    .push(
-                        button::custom(item)
-                            .class(theme::Button::Icon)
-                            .width(Length::Fixed(104.0))
-                            .on_press(ViewerMessage::Edit(EditMessage::CropRatio(*ratio))),
+            let items = CropRatio::presets()
+                .iter()
+                .map(|ratio| {
+                    let label = match ratio {
+                        CropRatio::Custom => fl!("crop-custom"),
+                        CropRatio::Original => fl!("crop-original"),
+                        CropRatio::Fixed(..) => ratio.label(is_portrait).to_string(),
+                    };
+                    choice_item(
+                        None,
+                        label,
+                        *ratio == self.crop_ratio,
+                        ViewerMessage::Edit(EditMessage::CropRatio(*ratio)),
                     )
-                    .width(Length::Shrink);
-            }
-
-            let popup = container(list).padding(8).style(|theme| {
-                let cosmic = theme.cosmic();
-                // force opaque because it is not a real popup.
-                let component = &cosmic.background(false).component;
-                container::Style {
-                    icon_color: None,
-                    text_color: None,
-                    background: Some(Background::Color(component.base.into())),
-                    border: Border {
-                        radius: cosmic.radius_s().map(|x| x + 1.0).into(),
-                        width: 1.0,
-                        color: component.divider.into(),
-                    },
-                    ..Default::default()
-                }
-            });
+                })
+                .collect();
+            let popup = menu_popup(items, CHOICE_MENU_WIDTH);
 
             pop = pop
                 .popup(popup)
@@ -1162,7 +1108,7 @@ impl CosmicViewer {
                             fl!("toolbar-zoom-out"),
                             ViewerMessage::Canvas(CanvasMessage::ZoomOut),
                         ))
-                        .push(text::body(zoom_pct))
+                        .push(zoom_label(zoom_pct))
                         .push(icon_btn(
                             "zoom-in-symbolic",
                             fl!("toolbar-zoom-in"),
@@ -1468,53 +1414,26 @@ impl CosmicViewer {
         let mut pop = popover(trigger);
 
         if self.shape_popup {
-            let make_btn = |tool: AnnotateTool, label: String| -> Element<'_, ViewerMessage> {
-                let is_selected = tool == self.selected_shape;
-                let item = Row::new()
-                    .push(icon(icon_cache_get(tool.icon_name())).size(16))
-                    .push(text::body(label))
-                    .push(if is_selected {
-                        Element::from(icon::from_name("object-select-symbolic").size(16).icon())
-                    } else {
-                        Element::from(horizontal().width(16))
-                    })
-                    .align_y(Alignment::Center)
-                    .spacing(8)
-                    .width(Length::Shrink);
-
-                button::custom(item)
-                    .class(Button::Icon)
-                    .width(Length::Shrink)
-                    .on_press(ViewerMessage::Edit(EditMessage::AnnotateTool(tool)))
-                    .into()
+            let item = |tool: AnnotateTool, label: String| {
+                choice_item(
+                    Some(icon(icon_cache_get(tool.icon_name())).size(16).into()),
+                    label,
+                    tool == self.selected_shape,
+                    ViewerMessage::Edit(EditMessage::AnnotateTool(tool)),
+                )
             };
-
-            let list = Column::new()
-                .push(make_btn(AnnotateTool::Rectangle, fl!("shapes-rectangle")))
-                .push(make_btn(AnnotateTool::Block, fl!("shapes-block")))
-                .push(make_btn(AnnotateTool::Ellipse, fl!("shapes-ellipse")))
-                .push(make_btn(AnnotateTool::Arrow, fl!("shapes-arrow")))
-                .push(make_btn(AnnotateTool::Line, fl!("shapes-line")))
-                .push(make_btn(AnnotateTool::Star, fl!("shapes-star")))
-                .push(make_btn(AnnotateTool::Polygon, fl!("shapes-polygon")))
-                .spacing(2);
-
-            let popup = container(list).padding(8).style(|theme| {
-                let cosmic = theme.cosmic();
-                // force opaque because it is not a real popup.
-                let component = &cosmic.background(false).component;
-                container::Style {
-                    icon_color: None,
-                    text_color: None,
-                    background: Some(Background::Color(component.base.into())),
-                    border: Border {
-                        radius: cosmic.radius_s().map(|x| x + 1.0).into(),
-                        width: 1.0,
-                        color: component.divider.into(),
-                    },
-                    ..Default::default()
-                }
-            });
+            let popup = menu_popup(
+                vec![
+                    item(AnnotateTool::Rectangle, fl!("shapes-rectangle")),
+                    item(AnnotateTool::Block, fl!("shapes-block")),
+                    item(AnnotateTool::Ellipse, fl!("shapes-ellipse")),
+                    item(AnnotateTool::Arrow, fl!("shapes-arrow")),
+                    item(AnnotateTool::Line, fl!("shapes-line")),
+                    item(AnnotateTool::Star, fl!("shapes-star")),
+                    item(AnnotateTool::Polygon, fl!("shapes-polygon")),
+                ],
+                CHOICE_MENU_WIDTH,
+            );
 
             pop = pop
                 .popup(popup)
@@ -1643,53 +1562,21 @@ impl CosmicViewer {
                 )
             };
 
-            let mut list = Column::new().spacing(4);
-            for (label, &size) in labels.iter().zip(sizes.iter()) {
-                // presets are exact integer-valued floats; match the active size.
-                let is_selected = (size - current).abs() < f32::EPSILON;
-                let item: Element<'_, ViewerMessage> = Row::new()
-                    .push(text::body(*label))
-                    .push(if is_selected {
-                        Element::from(icon::from_name("object-select-symbolic").size(16).icon())
-                    } else {
-                        Element::from(Space::new().width(16))
-                    })
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill)
-                    .into();
-
-                // `size` is drawn from `sizes`, so a matching preset always exists.
-                let idx = sizes
-                    .iter()
-                    .position(|s| (*s - size).abs() < f32::EPSILON)
-                    .expect("iterated size is one of the presets");
-                list = list.push(
-                    button::custom(item)
-                        .width(Length::Fill)
-                        .class(cosmic::theme::Button::Icon)
-                        .on_press(ViewerMessage::Edit(EditMessage::AnnotateStroke(idx))),
-                );
-            }
-
-            let popup = container(list)
-                .padding(8)
-                .width(Length::Fixed(100.0))
-                .style(|theme| {
-                    let cosmic = theme.cosmic();
-                    // force opaque because it is not a real popup.
-                    let component = &cosmic.background(false).component;
-                    container::Style {
-                        icon_color: None,
-                        text_color: None,
-                        background: Some(Background::Color(component.base.into())),
-                        border: Border {
-                            radius: cosmic.radius_s().map(|x| x + 1.0).into(),
-                            width: 1.0,
-                            color: component.divider.into(),
-                        },
-                        ..Default::default()
-                    }
-                });
+            let items = labels
+                .iter()
+                .zip(sizes.iter())
+                .enumerate()
+                .map(|(idx, (label, &size))| {
+                    // presets are exact integer-valued floats; match the active size.
+                    choice_item(
+                        None,
+                        (*label).to_string(),
+                        (size - current).abs() < f32::EPSILON,
+                        ViewerMessage::Edit(EditMessage::AnnotateStroke(idx)),
+                    )
+                })
+                .collect();
+            let popup = menu_popup(items, CHOICE_MENU_WIDTH);
 
             pop = pop
                 .popup(popup)
@@ -3527,6 +3414,8 @@ impl Application for CosmicViewer {
                         self.viewport.set_pan(pan);
                     }
                 }
+                // WMDE: nothing to do; the message alone builds the view again with the size.
+                CanvasMessage::Resized => {}
                 CanvasMessage::FitToView => {
                     if self.viewport.active_tool() != Some(ToolKind::Crop) {
                         self.viewport.set_zoom(1.0);
@@ -4735,6 +4624,75 @@ impl Application for CosmicViewer {
 }
 
 // HELPER FUNCTIONS
+
+/// WMDE: the zoom percentage at a width its widest value ("500%", the zoom cap) fits, so the
+/// number of digits never changes how the toolbar flows. Otherwise "93%" against "100%" could
+/// stack and unstack the toolbar, and with it the canvas height the percentage is taken from.
+fn zoom_label<'a>(percent: String) -> Element<'a, ViewerMessage> {
+    container(text::body(percent))
+        .width(Length::Fixed(40.0))
+        .align_x(Alignment::Center)
+        .into()
+}
+
+/// WMDE: the width of the toolbar's choice menus: crop ratio, shape and stroke.
+const CHOICE_MENU_WIDTH: f32 = 160.0;
+
+/// WMDE: a menu box after .doc/appearance/07-menus.md - 1 px border plus the menu padding, the
+/// menu radius, the base colour of the background container - holding `items` edge to edge. Drawn
+/// over the window, not as a popup surface, so the background is forced opaque.
+fn menu_popup(items: Vec<Element<'_, ViewerMessage>>, width: f32) -> Element<'_, ViewerMessage> {
+    container(Column::from_vec(items))
+        .padding(1.0 + menu_widget::PADDING)
+        .width(Length::Fixed(width))
+        .style(|theme| {
+            let cosmic = theme.cosmic();
+            let component = &cosmic.background(false).component;
+            container::Style {
+                icon_color: Some(component.on.into()),
+                text_color: Some(component.on.into()),
+                background: Some(Background::Color(component.base.into())),
+                border: Border {
+                    radius: menu_widget::RADIUS.into(),
+                    width: 1.0,
+                    color: component.divider.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
+
+/// WMDE: one entry of a choice menu. The selected one carries the accent check mark in the icon
+/// column, as a menu marks a checked item; the others show `icon`, if any.
+fn choice_item<'a>(
+    icon: Option<Element<'a, ViewerMessage>>,
+    label: String,
+    selected: bool,
+    message: ViewerMessage,
+) -> Element<'a, ViewerMessage> {
+    let slot = if selected {
+        Some(
+            icon::from_name("object-select-symbolic")
+                .size(menu_widget::ICON_SIZE)
+                .icon()
+                .class(theme::Svg::Custom(std::rc::Rc::new(|theme| {
+                    cosmic::iced::widget::svg::Style {
+                        color: Some(theme.cosmic().accent_text_color().into()),
+                    }
+                })))
+                .into(),
+        )
+    } else {
+        icon
+    };
+    menu_button(vec![
+        menu_widget::icon_column(slot),
+        text::body(label).into(),
+    ])
+    .on_press(message)
+    .into()
+}
 
 fn detail_row<'a>(label: String, value: String) -> Element<'a, ViewerMessage> {
     Column::new()

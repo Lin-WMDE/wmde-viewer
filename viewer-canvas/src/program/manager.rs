@@ -59,6 +59,8 @@ pub struct ViewportManager {
     // Live preview for the active tool
     active_preview: Option<Box<dyn ToolOperation>>,
     last_bounds: Cell<Rectangle>,
+    /// WMDE: the size the app last heard of, see `CanvasMessage::Resized`.
+    reported_size: Cell<Size>,
     crop_pan: Cell<Option<(Point, Vector)>>,
 }
 
@@ -84,6 +86,7 @@ impl ViewportManager {
             redo_stack: Vec::new(),
             active_preview: None,
             last_bounds: Cell::new(Rectangle::new(Point::new(0.0, 0.0), Size::ZERO)),
+            reported_size: Cell::new(Size::ZERO),
             crop_pan: Cell::new(None),
             select_target: None,
             move_mode: false,
@@ -874,6 +877,10 @@ impl Widget<CanvasMessage, Theme, Renderer> for Viewport<'_> {
     ) {
         let bounds = layout.bounds();
         self.manager.last_bounds.set(bounds);
+        if self.manager.reported_size.get() != bounds.size() {
+            self.manager.reported_size.set(bounds.size());
+            shell.publish(CanvasMessage::Resized);
+        }
 
         let is_crop = self.manager.active_tool == Some(ToolKind::Crop);
 

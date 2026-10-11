@@ -32,6 +32,9 @@ impl Debug for CanvasImage {
 pub enum CanvasMessage {
     /// Right-click context menu. Some(point) opens at position, None closes.
     ContextMenu(Option<Point>),
+    /// WMDE: the canvas took a new size. Things the app draws from it - the zoom percentage -
+    /// were drawn before it knew its size, so the app's view is built again.
+    Resized,
     ZoomIn,
     ZoomOut,
     ZoomBy(f32),
