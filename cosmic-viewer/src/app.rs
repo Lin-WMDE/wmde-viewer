@@ -4642,7 +4642,9 @@ const CHOICE_MENU_WIDTH: f32 = 160.0;
 /// menu radius, the base colour of the background container - holding `items` edge to edge. Drawn
 /// over the window, not as a popup surface, so the background is forced opaque.
 fn menu_popup(items: Vec<Element<'_, ViewerMessage>>, width: f32) -> Element<'_, ViewerMessage> {
-    container(Column::from_vec(items))
+    // `with_children`, not `from_vec`: only `push` widens the column to its Fill items, and a
+    // shrink column lays them out zero wide - an empty menu box.
+    container(Column::with_children(items))
         .padding(1.0 + menu_widget::PADDING)
         .width(Length::Fixed(width))
         .style(|theme| {
