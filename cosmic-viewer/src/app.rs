@@ -3149,6 +3149,12 @@ impl Application for CosmicViewer {
                     // Load the selected image at full resolution.
                     if let Some(idx) = self.nav.index() {
                         if let Some(path) = self.nav.current().cloned() {
+                            // WMDE: a picture already in the cache gets no ImageReady, so it
+                            // goes on the canvas here, as in GridActivate; the canvas was
+                            // cleared above and stayed empty.
+                            if self.cache.contains_full(&path) {
+                                self.show_cached(path.clone());
+                            }
                             tasks.push(self.load_full_image(path));
                         }
 

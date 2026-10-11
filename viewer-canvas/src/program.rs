@@ -103,6 +103,9 @@ impl Program<CanvasMessage, Theme, Renderer> for ViewerCanvas<'_> {
                     Some(Action::capture())
                 }
                 MouseEvent::WheelScrolled { delta } => {
+                    // WMDE: the zoom moves the pan, so a drag held through it would put back
+                    // its own start pan on the next move; the wheel ends the drag.
+                    *state = Interaction::None;
                     let factor = match delta {
                         mouse::ScrollDelta::Lines { y, .. } => {
                             if *y < 0.0 {
