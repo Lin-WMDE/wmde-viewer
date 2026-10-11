@@ -1,29 +1,29 @@
 # Application
-app-name = WMDE Viewer
+app-name = WMDE Переглядач
 app-description = Переглядач зображень для стільниці WMDE
 
 ## About
-menu-about = Про WMDE Viewer...
+menu-about = Про WMDE Переглядач...
 repository = Сховище
 support = Підтримка
 
 # Menu - File
 menu-file = Файл
 menu-open-file = Відкрити файл
-menu-open-recent = Нещодавні
+menu-open-recent = Відкрити нещодавні
 menu-open-folder = Відкрити теку
-menu-open-containing = Відкрити розташування файлу
+menu-open-containing = Відкрити теку з файлом
 menu-save = Зберегти
 menu-save-as = Зберегти як
-menu-set-wallpaper = Зробити тлом
-menu-move-to-trash = Пересунути до смітника
+menu-set-wallpaper = Встановити як шпалери
+menu-move-to-trash = Перемістити у смітник
 menu-delete-permanently = Остаточно видалити
-menu-image-details = Відомості про зображення
-menu-quit = Завершити
+menu-image-details = Подробиці зображення
+menu-quit = Вийти
 
 # Wallpaper dialog
-wallpaper-dialog-title = Зробити тлом
-wallpaper-all-displays = Всі дисплеї
+wallpaper-dialog-title = Встановити як шпалери
+wallpaper-all-displays = Усі екрани
 wallpaper-cancel = Скасувати
 
 # Toast
@@ -31,58 +31,58 @@ toast-undo = Скасувати
 
 # Menu - Edit
 menu-edit = Редагувати
-menu-undo = Скасувати дію
-menu-redo = Повторити дію
-menu-revert-all = Скасувати всі зміни
+menu-undo = Скасувати
+menu-redo = Повторити
+menu-revert-all = Відкотити всі зміни
 menu-cut = Вирізати
 menu-copy = Копіювати
 menu-paste = Вставити
 menu-copy-to-clipboard = Копіювати зображення до буфера обміну
 menu-copy-file-path = Копіювати шлях до файлу
-menu-rotate-left = Обернути ліворуч на 90°
-menu-rotate-right = Обернути праворуч на 90°
+menu-rotate-left = Повернути вліво на 90°
+menu-rotate-right = Повернути вправо на 90°
 
 # Menu - View
 menu-view = Вид
-menu-zoom-in = Збільшити
-menu-zoom-out = Зменшити
-menu-fit-to-view = Вписати у вікно
-menu-actual-size = Справжній розмір
-menu-fullscreen = Повний екран
+menu-zoom-in = Наблизити
+menu-zoom-out = Віддалити
+menu-fit-to-view = Підігнати до вікна
+menu-actual-size = Фактичний розмір
+menu-fullscreen = На весь екран
 
 # Toolbar
 toolbar-crop = Обрізати
-toolbar-annotate = Позначки
+toolbar-annotate = Розмітка
 toolbar-select = Вибрати
 toolbar-apply = Застосувати
 toolbar-cancel = Скасувати
-toolbar-rotate-left = Обернути ліворуч
-toolbar-rotate-right = Обернути праворуч
-toolbar-zoom-in = Збільшити
-toolbar-zoom-out = Зменшити
-toolbar-fullscreen = Повний екран
+toolbar-rotate-left = Повернути вліво
+toolbar-rotate-right = Повернути вправо
+toolbar-zoom-in = Наблизити
+toolbar-zoom-out = Віддалити
+toolbar-fullscreen = На весь екран
 toolbar-save = Зберегти
 toolbar-save-as = Зберегти як
 
 # Unsaved edits dialog
 unsaved-dialog-title = Незбережені зміни
-unsaved-dialog-body = У зображенні є незбережені зміни. Зберегти їх, перш ніж продовжити?
+unsaved-dialog-body = У вас є незбережені зміни в цьому зображенні. Зберегти їх, перш ніж продовжити?
 unsaved-save = Зберегти
 unsaved-save-as = Зберегти як
-unsaved-discard = Не зберігати
+unsaved-discard = Відхилити
 unsaved-cancel = Скасувати
 
 # Shapes Tool
 shapes-rectangle = Прямокутник
-shapes-block = Прямокутник із заливкою
+shapes-block = Блок
 shapes-line = Лінія
 shapes-arrow = Стрілка
-shapes-ellipse = Еліпс
+shapes-ellipse = Овал
 shapes-polygon = Багатокутник
 shapes-star = Зірка
 
 # Text tool
-text-tool = Напис
+text-tool = Текст
 
 # Drawing Tool
 drawing-highlighter = Маркер
@@ -90,8 +90,8 @@ drawing-pen = Ручка
 drawing-pencil = Олівець
 
 # Crop Tool
-crop-custom = Довільне
-crop-original = Оригінал
+crop-custom = Власний
+crop-original = Оригінальний
 crop-1-1 = 1:1
 crop-16-9 = 16:9
 crop-7-5 = 7:5
@@ -103,25 +103,25 @@ crop-2-3 = 2:3
 
 # Image Details Labels
 image-type = Тип:
-image-file-size = Розмір файлу:
+image-file-size = Розмір:
 image-created = Створено:
 image-modified = Змінено:
-image-accessed = Дата доступу:
-image-size = Розміри зображення:
-image-dpi = Роздільна здатність:
+image-accessed = Останній перегляд:
+image-size = Розмір зображення:
+image-dpi = DPI зображення:
 image-folder = Тека:
 
 # Settings
 settings = Налаштування
 appearance = Вигляд
 theme = Тема
-match-desktop = Системна
+match-desktop = Підігнати під стільницю
 dark = Темна
 light = Світла
 startup = Запуск
-show-navbar = Показувати панель мініатюр під час запуску
+show-navbar = Показувати панель навігації під час запуску
 
-type-here = Введіть текст...
+type-here = Напишіть тут...
 
 # WMDE additions: interface strings upstream keeps outside fl!()
 no-open-file = Файл не відкрито
