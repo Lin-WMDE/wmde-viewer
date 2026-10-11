@@ -187,6 +187,8 @@ pub fn fallback_shortcuts() -> Shortcuts {
         (vec![Ctrl], "1", ActualSize),
         (vec![Ctrl], "0", FitToView),
         (vec![Ctrl, Shift], "F", Fullscreen),
+        // F11 as in wmde-photos; libcosmic's own F11 is turned off in `on_fullscreen`.
+        (vec![], "F11", Fullscreen),
         (vec![Ctrl], "Space", ImageDetails),
         (vec![Ctrl], ",", Settings),
     ]

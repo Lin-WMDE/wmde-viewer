@@ -118,7 +118,7 @@
                 (
                     action: "Fullscreen",
                     label: { "": "Fullscreen", "uk": "На весь екран" },
-                    defaults: [(modifiers: [Ctrl, Shift], key: "F")],
+                    defaults: [(modifiers: [Ctrl, Shift], key: "F"), (modifiers: [], key: "F11")],
                 ),
             ],
         ),

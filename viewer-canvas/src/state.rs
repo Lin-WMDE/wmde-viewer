@@ -38,6 +38,9 @@ pub enum CanvasMessage {
     ZoomIn,
     ZoomOut,
     ZoomBy(f32),
+    /// WMDE: the wheel's zoom, about this point of the canvas: what is under the cursor stays
+    /// under it.
+    ZoomAt(f32, Point),
     Pan(Vector),
     ActualSize,
     FitToView,

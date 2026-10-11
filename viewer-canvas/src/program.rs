@@ -17,6 +17,8 @@ use viewer_tools::ToolOperation;
 
 /// Per-pixel touchpad zoom sensitivity. Lower = slower.
 const PIXEL_ZOOM_RATE: f32 = 0.0025;
+/// WMDE: one zoom step, of the keys, the buttons and a wheel notch alike.
+pub const ZOOM_STEP: f32 = 1.25;
 
 /// Scale to fit an image within the frame, capped at 1.0: images smaller than the
 /// frame render at actual size rather than being upscaled to fill (fit never
@@ -101,20 +103,20 @@ impl Program<CanvasMessage, Theme, Renderer> for ViewerCanvas<'_> {
                     Some(Action::capture())
                 }
                 MouseEvent::WheelScrolled { delta } => {
-                    let msg = match delta {
+                    let factor = match delta {
                         mouse::ScrollDelta::Lines { y, .. } => {
                             if *y < 0.0 {
-                                CanvasMessage::ZoomOut
+                                1.0 / ZOOM_STEP
                             } else {
-                                CanvasMessage::ZoomIn
+                                ZOOM_STEP
                             }
                         }
                         mouse::ScrollDelta::Pixels { y, .. } => {
-                            CanvasMessage::ZoomBy((1.0 + y * PIXEL_ZOOM_RATE).clamp(0.5, 2.0))
+                            (1.0 + y * PIXEL_ZOOM_RATE).clamp(0.5, 2.0)
                         }
                     };
 
-                    Some(Action::publish(msg))
+                    Some(Action::publish(CanvasMessage::ZoomAt(factor, position)))
                 }
                 _ => None,
             },

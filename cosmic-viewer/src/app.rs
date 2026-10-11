@@ -57,7 +57,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use viewer_canvas::{CanvasImage, CanvasMessage, ToolKind, ViewportManager};
+use viewer_canvas::{CanvasImage, CanvasMessage, ToolKind, ViewportManager, program::ZOOM_STEP};
 use viewer_config::{AppTheme, ViewerConfig};
 use viewer_core::{
     CachedImage, ClipboardImage, ImageCache, NavState, get_image_dir, is_drawing,
@@ -163,6 +163,9 @@ pub struct CosmicViewer {
     wallpapers_running: usize,
     /// WMDE: the latest copy asked for. Reads finish in any order; only this one is written.
     copy_request: u64,
+    /// WMDE: the file being opened while its directory is still read; the album, and with it
+    /// `nav.current()`, comes only with `ScanComplete`.
+    opening: Option<PathBuf>,
     quit_waiting: bool,
     about: About,
 }
@@ -429,6 +432,7 @@ impl CosmicViewer {
         let first = files[0].clone();
         let dir = first.parent().map_or_else(PathBuf::new, Path::to_path_buf);
         self.chosen_files = Some(files.clone());
+        self.opening = Some(first.clone());
         let sort_mode = self.config.sort_mode;
         let sort_order = self.config.sort_order;
         future(async move {
@@ -463,6 +467,7 @@ impl CosmicViewer {
         self.chosen_files = None;
         if let Some(dir) = get_image_dir(&path) {
             let select = path.is_file().then_some(path);
+            self.opening.clone_from(&select);
             let include_hidden = self.config.show_hidden_files;
             let sort_mode = self.config.sort_mode;
             let sort_order = self.config.sort_order;
@@ -914,7 +919,24 @@ impl CosmicViewer {
             self.viewport.actual_percent(viewport_size).round() as u32
         );
 
+        // WMDE: where the picture stands in the album, as wmde-photos showed it; not for an
+        // album of one.
+        let counter = (self.nav.total() > 1)
+            .then(|| self.nav.index())
+            .flatten()
+            .map(|index| {
+                text::body(fl!(
+                    "counter",
+                    at = (index + 1).to_string(),
+                    total = self.nav.total().to_string()
+                ))
+                .wrapping(cosmic::iced::widget::text::Wrapping::None)
+            });
+
         responsive_toolbar(mode)
+            .start_maybe(
+                counter.map(|counter| ToolbarItem::new(counter).priority(ItemPriority::Essential)),
+            )
             .start(
                 ToolbarItem::new(icon_btn(
                     "markup-symbolic",
@@ -1590,6 +1612,27 @@ impl CosmicViewer {
     }
     /// Multiply the current zoom by `factor`, preserving the fit/crop floor, the 500% ceiling,
     /// and the snap-through-100% behavior the wheel zoom relied on.
+    /// WMDE: zoom by `factor`, keeping `anchor` (a point of the canvas) where it is, and
+    /// otherwise the canvas centre. The pan then goes through `Pan` for its clamp, so zooming
+    /// out never leaves the picture off to one side.
+    fn zoom_about(&mut self, factor: f32, anchor: Option<Point>) -> Task<Action<ViewerMessage>> {
+        let old_zoom = self.viewport.zoom();
+        self.zoom_by(factor);
+        // The crop frame keeps its own pan; its zoom stays about the centre.
+        if self.viewport.active_tool() == Some(ToolKind::Crop) {
+            return Task::none();
+        }
+        let ratio = self.viewport.zoom() / old_zoom;
+        let pan = self.viewport.pan();
+        let pan = anchor.map_or(pan * ratio, |point| {
+            let bounds = self.viewport.last_bounds().get();
+            let from_centre =
+                Vector::new(point.x - bounds.width / 2.0, point.y - bounds.height / 2.0);
+            from_centre - (from_centre - pan) * ratio
+        });
+        self.update(ViewerMessage::Canvas(CanvasMessage::Pan(pan)))
+    }
+
     fn zoom_by(&mut self, factor: f32) {
         let bounds = self.viewport.last_bounds().get();
         let viewport = Size::new(bounds.width, bounds.height);
@@ -1784,6 +1827,7 @@ impl Application for CosmicViewer {
             details_stamp: 0,
             wallpapers_running: 0,
             copy_request: 0,
+            opening: None,
             quit_waiting: false,
             about: About::default()
                 .name(fl!("app-name"))
@@ -1986,6 +2030,23 @@ impl Application for CosmicViewer {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
+        } else if let Some(path) = self.nav.current().or(self.opening.as_ref()) {
+            // WMDE: a picture on its way says which one, as wmde-photos did. Stepping keeps the
+            // previous picture on the canvas instead, so this shows only while nothing is.
+            let file = path.file_name().map_or_else(
+                || fl!("unnamed-file"),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            Column::new()
+                .push(Space::new().height(Length::Fill))
+                .push(text::heading(file).center())
+                .push(text::body(fl!("opening")).center())
+                .push(Space::new().height(Length::Fill))
+                .spacing(cosmic::theme::active().cosmic().spacing.space_xs)
+                .align_x(Horizontal::Center)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
         } else {
             Column::new()
                 .push(Space::new().height(Length::Fill))
@@ -2118,6 +2179,13 @@ impl Application for CosmicViewer {
         }
 
         toaster(&self.toasts, view)
+    }
+
+    // WMDE: libcosmic maximizes the window on F11. Here F11 is a shortcut of the viewer's
+    // own fullscreen, rebindable like the rest, so the framework's handling is switched off;
+    // it also maximized the main window from the About window.
+    fn on_fullscreen(&mut self) -> Task<Action<Self::Message>> {
+        Task::none()
     }
 
     fn dialog(&self) -> Option<Element<'_, Self::Message>> {
@@ -3064,6 +3132,7 @@ impl Application for CosmicViewer {
             ViewerMessage::Nav(msg) => match msg {
                 NavMessage::ScanComplete(dir, images, select) => {
                     self.clear_canvas();
+                    self.opening = None;
 
                     self.nav.set_images(dir, images, select.as_deref());
 
@@ -3372,9 +3441,12 @@ impl Application for CosmicViewer {
                 CanvasMessage::ContextMenu(point) => {
                     self.context_menu_position = point;
                 }
-                CanvasMessage::ZoomIn => self.zoom_by(1.25),
-                CanvasMessage::ZoomOut => self.zoom_by(1.0 / 1.25),
-                CanvasMessage::ZoomBy(factor) => self.zoom_by(factor),
+                CanvasMessage::ZoomIn => return self.zoom_about(ZOOM_STEP, None),
+                CanvasMessage::ZoomOut => return self.zoom_about(1.0 / ZOOM_STEP, None),
+                CanvasMessage::ZoomBy(factor) => return self.zoom_about(factor, None),
+                CanvasMessage::ZoomAt(factor, point) => {
+                    return self.zoom_about(factor, Some(point));
+                }
                 CanvasMessage::Pan(pan) => {
                     let bounds = self.viewport.last_bounds().get();
                     if self.viewport.active_tool() == Some(ToolKind::Crop) {
@@ -3407,8 +3479,12 @@ impl Application for CosmicViewer {
                             self.viewport.set_pan(dv);
                         }
                     } else if let Some(size) = self.viewport.image_size() {
-                        let fit_scale =
-                            (bounds.width / size.width).min(bounds.height / size.height);
+                        // WMDE: capped at 1, as the canvas draws it: a picture smaller than the
+                        // view is not enlarged to fit, and the uncapped scale let it be dragged
+                        // past the edge.
+                        let fit_scale = (bounds.width / size.width)
+                            .min(bounds.height / size.height)
+                            .min(1.0);
                         let scale = self.viewport.zoom() * fit_scale;
                         // Clamp so the zoomed image can't be dragged past the view edges.
                         let max_x = size.width.mul_add(scale, -bounds.width).max(0.0) / 2.0;
