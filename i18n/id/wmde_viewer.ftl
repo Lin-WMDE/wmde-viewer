@@ -1,6 +1,6 @@
-app-name = Penampil WMDE
+app-name = Penampil
 app-description = Penampil gambar untuk desktop WMDE
-menu-about = Tentang Penampil WMDE...
+menu-about = Tentang Penampil...
 repository = Repositori
 support = Dukungan
 menu-file = Berkas

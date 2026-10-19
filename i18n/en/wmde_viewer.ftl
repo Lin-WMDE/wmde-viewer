@@ -1,9 +1,9 @@
 # Application
-app-name = WMDE Viewer
+app-name = Viewer
 app-description = Image viewer for the WMDE desktop
 
 ## About
-menu-about = About WMDE Viewer...
+menu-about = About Viewer...
 repository = Repository
 support = Support
 
@@ -141,10 +141,6 @@ unnamed-file = file
 moved-to-trash = Moved { $file } to trash
 image-type-format = { $format } image
 image-type-generic = Image
-size-b = B
-size-kb = KB
-size-mb = MB
-size-gb = GB
 size-bytes = ({ $bytes } { $count ->
     [one] byte
    *[other] bytes

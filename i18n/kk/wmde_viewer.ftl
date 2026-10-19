@@ -1,6 +1,6 @@
-app-name = WMDE Viewer
+app-name = Viewer
 app-description = WMDE жұмыс үстеліне арналған суреттерді қарау құралы
-menu-about = WMDE Viewer туралы...
+menu-about = Viewer туралы...
 repository = Репозиторий
 support = Қолдау
 menu-file = Файл

@@ -4876,38 +4876,12 @@ fn text_color_rgba(c: Color) -> cosmic_text::Color {
     )
 }
 
-#[allow(clippy::cast_precision_loss)]
+// WMDE: the stack's one size format, with the exact count grouped by the locale as well, so a
+// decimal comma never doubles as the group separator.
 fn format_file_size(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = 1024.0 * KB;
-    const GB: f64 = 1024.0 * MB;
-
-    let human_readable = if bytes as f64 >= GB {
-        format!("{:.1} {}", bytes as f64 / GB, fl!("size-gb"))
-    } else if bytes as f64 >= MB {
-        format!("{:.1} {}", bytes as f64 / MB, fl!("size-mb"))
-    } else if bytes as f64 >= KB {
-        format!("{:.1} {}", bytes as f64 / KB, fl!("size-kb"))
-    } else {
-        format!("{bytes} {}", fl!("size-b"))
-    };
-
-    let grouped = format_number(bytes);
+    let grouped = cosmic::units::count(bytes);
     let exact = fl!("size-bytes", bytes = grouped.as_str(), count = bytes);
-    format!("{human_readable} {exact}")
-}
-
-fn format_number(num: u64) -> String {
-    let s = num.to_string();
-    let mut result = String::with_capacity(s.len() + s.len() / 3);
-    for (idx, ch) in s.chars().enumerate() {
-        if idx > 0 && (s.len() - idx).is_multiple_of(3) {
-            result.push(',');
-        }
-
-        result.push(ch);
-    }
-    result
+    format!("{} {exact}", cosmic::units::size(bytes))
 }
 
 fn format_system_time(time: std::time::SystemTime) -> String {

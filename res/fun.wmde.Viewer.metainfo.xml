@@ -9,15 +9,15 @@
     <update_contact>bryan.hyland32@gmail.com</update_contact>
     <url type="homepage">https://wmde.fun</url>
     <url type="bugtracker">https://github.com/Lin-WMDE/wmde-viewer/issues</url>
-    <name>WMDE Viewer</name>
+    <name>Viewer</name>
     <summary>Image viewer for the WMDE desktop</summary>
     <description>
         <p>
-            WMDE Viewer is an image viewer and markup tool for the WMDE desktop environment.
+            Viewer is an image viewer and markup tool for the WMDE desktop environment.
             It opens a wide range of formats and provides quick navigation, non-destructive editing, and markup tools.
         </p>
         <p
-        >WMDE Viewer opens a wide range of formats and provides quick navigation, non-destructive editing, and markup tools</p>
+        >Viewer opens a wide range of formats and provides quick navigation, non-destructive editing, and markup tools</p>
         <ul>
             <li
             >Opens JPEG, PNG, GIF, WebP, BMP, TIFF, ICO, AVIF, HEIF/HEIC, JPEG XL, SVG and the netpbm and Farbfeld families</li>

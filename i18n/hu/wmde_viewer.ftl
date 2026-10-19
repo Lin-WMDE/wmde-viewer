@@ -1,6 +1,6 @@
-app-name = WMDE Képmegjelenítő
+app-name = Képmegjelenítő
 app-description = Képmegjelenítő a WMDE asztali környezethez
-menu-about = A WMDE Képmegjelenítő névjegye…
+menu-about = A Képmegjelenítő névjegye…
 repository = Tároló
 support = Támogatás
 menu-file = Fájl

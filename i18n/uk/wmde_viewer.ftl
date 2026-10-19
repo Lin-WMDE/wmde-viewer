@@ -1,9 +1,9 @@
 # Application
-app-name = WMDE Переглядач
+app-name = Переглядач
 app-description = Переглядач зображень для стільниці WMDE
 
 ## About
-menu-about = Про WMDE Переглядач...
+menu-about = Про Переглядач...
 repository = Сховище
 support = Підтримка
 
@@ -141,10 +141,6 @@ unnamed-file = файл
 moved-to-trash = «{ $file }» пересунуто до смітника
 image-type-format = Зображення { $format }
 image-type-generic = Зображення
-size-b = Б
-size-kb = КБ
-size-mb = МБ
-size-gb = ГБ
 size-bytes = ({ $bytes } { $count ->
     [one] байт
     [few] байти

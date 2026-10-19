@@ -1,6 +1,6 @@
-app-name = WMDEin katseluohjelma
+app-name = Katseluohjelma
 app-description = Ohjelma kuvien katseluun WMDE-työpöydälle
-menu-about = Tietoa WMDEin katseluohjelmasta…
+menu-about = Tietoa katseluohjelmasta…
 support = Tuki
 menu-file = Tiedosto
 menu-open-file = Avaa tiedosto

@@ -1,6 +1,6 @@
-app-name = Visor de WMDE
+app-name = Visor
 app-description = Visor de imaxes para o escritorio WMDE
-menu-about = Sobre o Visor de WMDE...
+menu-about = Sobre o Visor...
 repository = Repositorio
 support = Soporte
 menu-file = Ficheiro

@@ -1,6 +1,6 @@
-app-name = WMDE Visare
+app-name = Visare
 app-description = Bildvisare för skrivbordsmiljön WMDE
-menu-about = Om WMDE Visare...
+menu-about = Om Visare...
 repository = Källkod
 support = Support
 menu-file = Fil

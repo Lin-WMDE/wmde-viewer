@@ -35,8 +35,9 @@ pub fn load_reason(err: &LoadError) -> String {
         LoadError::Decode(_) | LoadError::UnsupportedFormat(_) => fl!("error-reason-unreadable"),
         LoadError::NoPreview => fl!("error-reason-no-preview"),
         // Need rounded up and what is free rounded down: the one shown is always the larger.
+        // WMDE: megabytes of 1024 KB, as `cosmic::units` counts them everywhere else.
         LoadError::TooLarge { needed, available } => {
-            let (needed, available) = (needed.div_ceil(1_000_000), available / 1_000_000);
+            let (needed, available) = (needed.div_ceil(1 << 20), available >> 20);
             fl!(
                 "error-reason-too-large",
                 needed = needed,

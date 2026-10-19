@@ -1,6 +1,6 @@
-app-name = WMDE 查看器
+app-name = 查看器
 app-description = WMDE 桌面的图片查看器
-menu-about = 关于 WMDE 查看器…
+menu-about = 关于查看器…
 repository = 仓库
 support = 支持
 menu-file = 文件

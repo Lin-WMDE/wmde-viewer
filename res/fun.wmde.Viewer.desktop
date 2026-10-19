@@ -1,6 +1,8 @@
 [Desktop Entry]
-Name=WMDE Viewer
-GenericName=WMDE Viewer
+Name=Viewer
+Name[uk]=Переглядач
+GenericName=Image Viewer
+GenericName[uk]=Переглядач зображень
 Comment=View and annotate images
 Comment[uk]=Перегляд і позначення зображень
 Exec=wmde-viewer %F
@@ -10,9 +12,5 @@ Type=Application
 Categories=Graphics;Image;Media;
 StartupNotify=true
 MimeType=image/jpeg;image/png;image/gif;image/webp;image/bmp;image/tiff;image/x-icon;image/avif;image/heif;image/heic;image/jxl;image/svg+xml;image/x-portable-pixmap;image/x-portable-graymap;image/x-portable-bitmap;image/x-portable-anymap;image/x-qoi;image/vnd.radiance;image/svg+xml-compressed;image/x-adobe-dng;image/x-canon-cr2;image/x-canon-crw;image/x-nikon-nef;image/x-nikon-nrw;image/x-sony-arw;image/x-olympus-orf;image/x-panasonic-rw2;image/x-pentax-pef;image/x-samsung-srw;image/x-fuji-raf;image/x-minolta-mrw;image/x-sigma-x3f;
-Keywords=image;photo;picture;viewer;annotate;markup;raw;
-Keywords[uk]=зображення;фото;світлина;картинка;переглядач;позначки;
-
-[Desktop Action Gallery]
-Name=WMDE Viewer
-Exec=wmde-viewer
+Keywords=image;photo;picture;viewer;annotate;markup;raw;WMDE;
+Keywords[uk]=зображення;фото;світлина;картинка;переглядач;позначки;WMDE;

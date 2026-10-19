@@ -1,5 +1,5 @@
 app-description = Bildbetrachter für den WMDE Desktop
-menu-about = Über WMDE Betrachter ...
+menu-about = Über Betrachter ...
 repository = Repositorium
 support = Unterstützung
 menu-file = Datei
@@ -90,5 +90,5 @@ toolbar-zoom-out = Herauszoomen
 menu-zoom-in = Hineinzoomen
 toolbar-zoom-in = Hineinzoomen
 toolbar-annotate = Auszeichnung
-app-name = WMDE Betrachter
+app-name = Betrachter
 menu-fit-to-view = An Ansicht anpassen

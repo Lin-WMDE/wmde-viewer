@@ -1,6 +1,6 @@
-app-name = Visionneuse WMDE
+app-name = Visionneuse
 app-description = Visionneuse d'image pour le bureau WMDE
-menu-about = À propos de Visionneuse WMDE...
+menu-about = À propos de Visionneuse...
 repository = Dépôt
 support = Support
 menu-file = Fichier

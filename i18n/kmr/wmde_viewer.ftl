@@ -1,6 +1,6 @@
-app-name = WMDE Viewer
+app-name = Viewer
 app-description = Nîşanderê wêneyan ji bo sermaseya WMDE
-menu-about = Di derbarê WMDE Viewer de...
+menu-about = Di derbarê Viewer de...
 repository = Embar
 support = Piştgirî
 menu-file = Pel
