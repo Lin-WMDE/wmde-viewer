@@ -1,6 +1,6 @@
 app-name = Projektor
 app-description = Przeglądarka obrazów dla środowiska WMDE
-menu-about = O Rzutniku…
+menu-about = O Projektorze…
 repository = Repozytorium
 support = Wsparcie
 menu-file = Plik
