@@ -8,7 +8,7 @@
 # real `i18n/en/wmde_viewer.ftl`) when version inheritance is used, breaking
 # every `fl!` call. Keep the version literal here until that is resolved upstream.
 # WMDE: equal to the WMDE version on purpose - the About drawer prints it.
-version = "1.11.0"
+version = "1.11.1"
 name = "wmde-viewer"
 description.workspace = true
 edition.workspace = true

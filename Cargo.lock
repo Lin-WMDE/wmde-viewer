@@ -7412,7 +7412,7 @@ dependencies = [
 
 [[package]]
 name = "wmde-viewer"
-version = "1.11.0"
+version = "1.11.1"
 dependencies = [
  "chrono",
  "i18n-embed",
